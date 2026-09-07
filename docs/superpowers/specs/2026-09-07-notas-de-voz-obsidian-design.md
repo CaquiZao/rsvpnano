@@ -87,6 +87,14 @@ Configura o caminho de entrada do ES8311 e lê blocos de PCM.
 - Configura os registradores de ADC do ES8311 (endereço `0x18` no `Wire1`)
 - Lê I2S RX no `I2S_NUM_0`, pinos MCLK=7, BCLK=15, WS=46, DIN=6
 
+**Full duplex sai de graça.** `I2SClass::begin()` aloca `tx_chan` e `rx_chan` quando ambos os pinos de dados estão definidos (`ESP_I2S.cpp:505-509`). Hoje o `Context` só informa `dataOutPin`, por isso o periférico sobe em TX-only. A mudança é passar os dois em uma única chamada:
+
+```cpp
+i2s.setPins(bclkPin, wsPin, dataOutPin, dataInPin, mclkPin);
+```
+
+Gravação e `beep()` passam a conviver no mesmo periférico, sem alternância de modo.
+
 Estende `src/drivers/audio/es8311/Es8311.{h,cpp}` **de forma aditiva**:
 
 ```cpp
@@ -101,7 +109,8 @@ bool readSamples(Context& context, int16_t* samples, size_t sampleCount, uint32_
 Escreve WAV PCM 16 kHz / mono / 16-bit no SD.
 
 - Buffer ping-pong de 2×32 KB em PSRAM. A 32 KB/s de vazão, cada metade dá 1 s de folga para a escrita no SD — margem ampla.
-- Cabeçalho de 44 bytes escrito no início com tamanhos zerados e corrigido no `close()`, evitando um segundo passe sobre o arquivo.
+- Cabeçalho via `pcm_wav_header_t` e o macro `PCM_WAV_HEADER_DEFAULT(...)`, que já vêm no `wav_header.h` da própria `ESP_I2S` — nada de montar os 44 bytes à mão.
+- Escrito no início com tamanhos zerados e corrigido no `close()`, evitando um segundo passe sobre o arquivo.
 - Se o `close()` não acontecer (queda de energia), o arquivo fica em `pending/` com os tamanhos zerados. O bridge **conserta o cabeçalho** a partir do tamanho real do arquivo e transcreve normalmente — uma queda de energia não pode custar a nota. Só é rejeitado com 4xx o arquivo curto demais para conter áudio (menos de 1 s).
 
 ### 5.3 `VoiceQueue`
@@ -231,7 +240,7 @@ Content-Type: multipart/form-data
 
 | Risco | Gravidade | Mitigação |
 |---|---|---|
-| **I2S full-duplex.** O driver mantém um `I2SClass` em `I2S_NUM_0` configurado para TX. Gravar exige RX no mesmo periférico, e o wrapper `ESP_I2S` do Arduino pode não expor TX+RX simultâneos. | Alta | Plano B: alternar modos — parar TX, subir RX para gravar, restaurar ao encerrar. O `recoverOutputPath()` já existente no driver indica que o autor previu restauração do caminho de saída. **Validar isto antes de qualquer outra coisa.** |
+| ~~I2S full-duplex~~ — **resolvido na análise, não é mais risco** | — | `ESP_I2S.cpp:505-509` (arduino-esp32 3.3.9, versão fixada no `platformio.ini`) aloca `tx_chan` **e** `rx_chan` automaticamente quando `_dout >= 0 && _din >= 0`. O firmware está em TX-only só porque o `Context` nunca informa um pino de entrada. Basta passar `din = 6` em `setPins()`. Sem alternância de modo, sem risco para o `beep()`. |
 | Qualidade do microfone em ambiente real | Média | Ajuste empírico do ganho do PGA; medir com gravações reais antes de fixar |
 | Tempo de inferência do Nemotron desconhecido nesta máquina | Média | Medir com `--repeat` antes de prometer latência |
 | OneDrive gerando cópias de conflito | Baixa | Escrita atômica (temp + rename) |
