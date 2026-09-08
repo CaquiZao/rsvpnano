@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Literal, Protocol
 
 from handy_bridge.config import PostProcessConfig
 
@@ -12,15 +12,37 @@ class PostProcessError(Exception):
     """Raised when a post-processing backend fails or returns unusable output."""
 
 
+# "keyword" means the speaker used an explicit marker word and meant it as a task;
+# "inferred" means the model spotted an intention and is less sure, so the card
+# lands in the triage lane instead of straight into the to-do lane.
+TaskSource = Literal["keyword", "inferred"]
+
+
+@dataclass(frozen=True)
+class Task:
+    text: str
+    source: TaskSource = "inferred"
+    answerable: bool = False
+
+
+@dataclass(frozen=True)
+class Answer:
+    question: str
+    answer: str
+
+
 @dataclass(frozen=True)
 class PostProcessResult:
     title: str
     tags: list[str]
     cleaned: str
+    tasks: list[Task] = field(default_factory=list)
 
 
 class PostProcessor(Protocol):
     def process(self, transcript: str) -> PostProcessResult: ...
+
+    def answer_tasks(self, questions: list[str], excerpt: str | None) -> list[Answer]: ...
 
 
 def build(cfg: PostProcessConfig) -> PostProcessor | None:

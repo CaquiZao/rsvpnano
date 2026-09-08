@@ -6,18 +6,43 @@ import json
 import subprocess
 from typing import Callable
 
-from handy_bridge.postprocess import PostProcessError, PostProcessResult
+from handy_bridge.postprocess import Answer, PostProcessError, PostProcessResult, Task
+
+MARKER_WORDS = ("pendência", "pendencia", "tarefa", "anotar")
 
 PROMPT = (
-    "Você recebe a transcrição bruta de uma nota de voz em português. "
+    "Você recebe a transcrição bruta de uma nota de voz em português, gravada por "
+    "alguém que estava lendo um livro. "
     "Responda APENAS com um objeto JSON válido, sem cercas de código, no formato "
-    '{"title": string, "tags": array de strings, "cleaned": string}. '
+    '{"title": string, "tags": array de strings, "cleaned": string, '
+    '"tasks": array de {"text": string, "source": "keyword" ou "inferred", '
+    '"answerable": boolean}}.\n'
     '"title" é um título curto e descritivo. "tags" são de 2 a 5 tags em minúsculas. '
     '"cleaned" é a transcrição com pontuação corrigida e hesitações removidas, '
-    "preservando o sentido e sem inventar informação.\n\nTranscrição:\n"
+    "preservando o sentido e sem inventar informação.\n"
+    '"tasks" são pendências que a pessoa deixou. Use "keyword" quando ela disser '
+    "explicitamente uma palavra marcadora (" + ", ".join(MARKER_WORDS) + ") seguida de "
+    'uma ação. Use "inferred" quando não disser a palavra mas houver intenção clara de '
+    "estudar, pesquisar ou revisar algo. "
+    "Seja CONSERVADOR: se houver dúvida se é uma pendência ou apenas um comentário, "
+    "OMITA. Um quadro com pendências inventadas é pior que um quadro incompleto.\n"
+    '"answerable" é true apenas quando a pendência é uma dúvida conceitual que pode ser '
+    "respondida de imediato em poucas frases, sem precisar de dado atual ou de trabalho "
+    "da pessoa.\n\nTranscrição:\n"
+)
+
+ANSWER_PROMPT = (
+    "Responda às perguntas abaixo, feitas por alguém que estava lendo um livro. "
+    "Responda APENAS com um objeto JSON válido, sem cercas de código, no formato "
+    '{"answers": array de {"question": string, "answer": string}}, repetindo cada '
+    "pergunta exatamente como recebida.\n"
+    "Cada resposta deve ter NO MÁXIMO 120 palavras, ser direta e concreta. "
+    "Não comece com introduções como 'Ótima pergunta'. Não repita a pergunta na resposta. "
+    "Se não souber com segurança, diga isso em uma frase em vez de especular.\n"
 )
 
 _REQUIRED = ("title", "tags", "cleaned")
+_VALID_SOURCES = ("keyword", "inferred")
 
 
 def extract_json_object(text: str) -> dict:
@@ -53,6 +78,36 @@ def extract_json_object(text: str) -> dict:
     raise PostProcessError("no JSON object found in model output")
 
 
+def _parse_tasks(raw: object) -> list[Task]:
+    """Read the tasks array defensively.
+
+    Anything ambiguous degrades to "inferred" and answerable=False, so an
+    uncertain extraction lands in the triage lane rather than being treated as
+    something the speaker asked for outright.
+    """
+    if not isinstance(raw, list):
+        return []
+
+    tasks: list[Task] = []
+    for entry in raw:
+        if isinstance(entry, str):
+            text, source, answerable = entry, "inferred", False
+        elif isinstance(entry, dict):
+            text = str(entry.get("text", ""))
+            source = str(entry.get("source", "inferred"))
+            answerable = bool(entry.get("answerable", False))
+        else:
+            continue
+
+        text = text.strip()
+        if not text:
+            continue
+        if source not in _VALID_SOURCES:
+            source = "inferred"
+        tasks.append(Task(text=text, source=source, answerable=answerable))
+    return tasks
+
+
 def _default_runner(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
     return subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", timeout=timeout
@@ -72,11 +127,12 @@ class ClaudeCliProcessor:
         self._runner = runner
         self._timeout_s = timeout_s
 
-    def process(self, transcript: str) -> PostProcessResult:
+    def _run(self, prompt: str) -> dict:
+        """Invoke the CLI and return the JSON object the model produced."""
         cmd = [
             "claude",
             "-p",
-            PROMPT + transcript,
+            prompt,
             "--output-format",
             "json",
             "--model",
@@ -106,7 +162,10 @@ class ClaudeCliProcessor:
                 f"claude CLI reported an error: {wrapper.get('result')!r}"
             )
 
-        payload = extract_json_object(str(wrapper.get("result", "")))
+        return extract_json_object(str(wrapper.get("result", "")))
+
+    def process(self, transcript: str) -> PostProcessResult:
+        payload = self._run(PROMPT + transcript)
         missing = [key for key in _REQUIRED if key not in payload]
         if missing:
             raise PostProcessError(f"model output missing keys: {', '.join(missing)}")
@@ -116,4 +175,35 @@ class ClaudeCliProcessor:
             title=str(payload["title"]).strip(),
             tags=tags,
             cleaned=str(payload["cleaned"]).strip(),
+            tasks=_parse_tasks(payload.get("tasks")),
         )
+
+    def answer_tasks(self, questions: list[str], excerpt: str | None) -> list[Answer]:
+        """Answer every question in a single call.
+
+        One call per question would multiply the ~30k tokens of Claude Code system
+        prompt that each CLI invocation carries, so the batch matters for cost.
+        """
+        if not questions:
+            return []
+
+        parts = [ANSWER_PROMPT]
+        if excerpt:
+            parts.append(f"\nTrecho do livro que a pessoa estava lendo:\n{excerpt}\n")
+        parts.append("\nPerguntas:\n")
+        parts.extend(f"- {question}\n" for question in questions)
+
+        payload = self._run("".join(parts))
+        raw = payload.get("answers")
+        if not isinstance(raw, list):
+            raise PostProcessError("model output has no 'answers' list")
+
+        answers: list[Answer] = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            question = str(entry.get("question", "")).strip()
+            answer = str(entry.get("answer", "")).strip()
+            if question and answer:
+                answers.append(Answer(question=question, answer=answer))
+        return answers
