@@ -459,6 +459,32 @@ fila, uploader e bridge; muda o endpoint e o formato da nota.
 por dia, sequência de dias. Independente: não precisa de áudio nem de rede. A faixa de
 640×172 é a forma natural de uma sparkline.
 
+**Sub-projeto 5 — progresso por capítulo.** Decidido em 2026-09-08 a partir de uma
+queixa de uso real: ler um capítulo inteiro e a barra global mal se mexer.
+
+O problema é aritmético, não de percepção. O Sapiens tem **146.511 palavras em 24
+capítulos**, então terminar um capítulo move a barra global entre 3% e 6%. Uma barra
+que quase não anda não informa nem motiva.
+
+**O dado já existe:** o leitor recebe `std::span<const ChapterMarker>`, e
+`ChapterMarker` (em `src/library/BookMetadata.h`) guarda `title` e `wordIndex`. Achar o
+capítulo atual e a fração dentro dele é aritmética sobre o que já está na memória.
+
+**Decisão: duas barras.** Uma fina global no topo, uma grossa do capítulo embaixo, mais
+título e percentual do capítulo.
+
+**Por que não a barra segmentada por capítulo**, que era a alternativa mais bonita:
+medindo o livro real, `Agradecimentos` tem 94 palavras — **0,4 pixel** numa barra de
+640 — e `O animal` tem 1,5 px. Segmentos proporcionais ficam sub-pixel. Forçar largura
+mínima faz a barra **mentir sobre as proporções**, sugerindo que um trecho de 94
+palavras equivale a um de 3.000. Filtrar os `##` que não são capítulos de leitura
+(prefácio, agradecimentos, créditos de imagem) exigiria heurística por tamanho, e
+heurística erra.
+
+**Custo de manutenção:** esta é a **primeira mudança que toca a tela de leitura do
+upstream**. Tudo o mais neste projeto foi aditivo — módulos, temas e arquivos novos.
+Aqui começa o atrito real de rebase que D10 buscava evitar.
+
 **Escopo futuro, sem plano.** Bichinho virtual estilo Tamagotchi (o fork RSVPbookworm
 tem uma implementação completa cuja **ideia** vale, mas cujo código não serve: bifurcou
 da v0.0.1, usa `driver/i2s.h` obsoleto, e o HEAD não compila porque
