@@ -173,9 +173,26 @@ Serviço Python único, rodando em background no Windows.
 
 1. Anunciar `_handybridge._tcp` na porta `8787` via `zeroconf`
 2. Servir `POST /v1/notes`, persistir o WAV em disco e responder `200` imediatamente
-3. Transcrever de forma assíncrona:
-   `handy --transcribe-file <wav> --json --model handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf`
-4. Pós-processar: `claude -p "<prompt>" --output-format json` retornando `{"title": str, "tags": [str], "cleaned": str}`
+3. Transcrever de forma assíncrona (valores verificados nesta máquina):
+
+   ```
+   C:\Users\kakam\AppData\Local\Handy\handy.exe --transcribe-file <wav> --json \
+     --model handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf
+   ```
+
+   O ID do modelo inclui o nome do arquivo `.gguf`, não apenas o repositório. O
+   modelo está baixado (716 MB, suporta português). Os **logs saem em stderr e o
+   JSON em stdout**, então basta parsear stdout. Formato de saída:
+
+   ```json
+   {"audio_secs":2.0,"best_ms":1508,"load_ms":1366,"model":"...","rtf":1.326,"text":"...","transcribe_ms":[1508]}
+   ```
+
+   O campo relevante é `text`. Sai com código 0.
+
+4. Pós-processar por uma interface plugável (`PostProcessor`) com três
+   implementações: `claude` CLI (padrão), API Anthropic direta e Ollama. Todas
+   retornam `{"title": str, "tags": [str], "cleaned": str}`.
 5. Escrever a nota em `Reading/Inbox/`
 
 O `200` **antes** da transcrição é deliberado: o device não deve ficar com a rádio ligada esperando inferência. A responsabilidade do bridge no ACK é apenas "o áudio está seguro no meu disco".
@@ -189,12 +206,32 @@ audio_store  = "C:/Users/kakam/.handy-bridge/audio"
 port         = 8787
 
 [asr]
-model = "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf"
+handy_exe = "C:/Users/kakam/AppData/Local/Handy/handy.exe"
+model     = "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf"
+timeout_s = 900
 
-[llm]
-enabled = true
-command = "claude"
+[post_process]
+enabled  = true
+backend  = "claude_cli"   # claude_cli | anthropic_api | ollama | none
+model    = "claude-haiku-4-5-20251001"
 ```
+
+### Desempenho medido nesta máquina
+
+| Medida | Valor |
+|---|---|
+| GPU vinculada | GeForce MX110 (backend Vulkan0) |
+| Velocidade de transcrição | `rtf` 1.33 — processar leva ~0,75× a duração do áudio |
+| Carga do modelo | ~1,4 s por invocação |
+| Nota de 1 min (estimado) | ~46 s de transcrição |
+| `claude -p` com Opus | $0,153 equivalente por nota, ~3 s |
+| `claude -p` com Haiku | $0,060 equivalente por nota, ~5 s |
+
+O custo por nota do CLI vem de ~30 mil tokens de system prompt do Claude Code que
+viajam a cada chamada, para uma tarefa que precisa de ~200 tokens de contexto. Em
+plano de assinatura isso não vira cobrança, mas consome limites de uso. É a razão de
+`PostProcessor` ser plugável: trocar para `anthropic_api` reduz o custo em ~100× sem
+tocar no resto do bridge.
 
 ### Degradação
 
