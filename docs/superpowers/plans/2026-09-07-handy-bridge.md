@@ -1482,7 +1482,7 @@ def process_note(
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `cd bridge && uv run pytest tests/test_pipeline.py -v`
-Expected: PASS (13 testes)
+Expected: PASS (12 testes)
 
 - [ ] **Step 5: Rodar a suíte inteira**
 
