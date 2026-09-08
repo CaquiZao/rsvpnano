@@ -119,3 +119,15 @@ def test_add_cards_leaves_no_temp_file(tmp_path):
     path = ensure_board(tmp_path / "b.md")
     add_cards(path, "Triagem", ["x"])
     assert [p.name for p in Path(tmp_path).iterdir() if p.suffix != ".md"] == []
+
+
+def test_render_card_marks_done_when_asked():
+    # Um cartao na raia Concluido precisa vir marcado; desmarcado ali e contraditorio.
+    assert render_card("Resolvida", None, done=True) == "- [x] Resolvida"
+    assert render_card("Resolvida", "Nota", done=True) == "- [x] Resolvida [[Nota]]"
+
+
+def test_add_cards_preserves_a_checked_line(tmp_path):
+    path = ensure_board(tmp_path / "b.md")
+    add_cards(path, "Concluído", [render_card("Feita", None, done=True)])
+    assert "- [x] Feita" in path.read_text(encoding="utf-8")

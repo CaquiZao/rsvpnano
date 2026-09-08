@@ -334,8 +334,10 @@ def test_cards_land_in_the_lane_that_matches_their_source(tmp_path):
 
     assert any("Explicita" in c for c in lane_cards(kanban.TODO_LANE))
     assert any("Inferida" in c for c in lane_cards(kanban.TRIAGE_LANE))
-    # A respondida ja esta resolvida, entao vai direto para Concluido
-    assert any("Respondida" in c for c in lane_cards(kanban.DONE_LANE))
+    # A respondida ja esta resolvida: vai para Concluido E vem marcada
+    at = lines.index(f"## {kanban.DONE_LANE}")
+    done = [ln for ln in lines[at + 1 :] if ln.startswith("- [")]
+    assert any("Respondida" in c and c.startswith("- [x]") for c in done)
 
 
 def test_card_links_back_to_the_note(tmp_path):

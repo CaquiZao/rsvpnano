@@ -47,11 +47,14 @@ def _strip_marker(text: str) -> str:
     return body
 
 
-def render_card(text: str, note_name: str | None) -> str:
+def render_card(text: str, note_name: str | None, done: bool = False) -> str:
     body = _strip_marker(text)
+    # A card sitting in the "done" lane must be checked; unchecked there contradicts
+    # the lane it is in, and the plugin treats the checkbox as the real state.
+    box = "- [x] " if done else "- [ ] "
     if note_name:
-        return f"- [ ] {body} [[{note_name}]]"
-    return f"- [ ] {body}"
+        return f"{box}{body} [[{note_name}]]"
+    return f"{box}{body}"
 
 
 def as_card_line(entry: str) -> str:

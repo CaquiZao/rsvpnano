@@ -159,13 +159,16 @@ def _update_board(
     answered = {answer.question for answer in answers}
     by_lane: dict[str, list[str]] = {}
     for task in tasks:
-        if task.text in answered:
+        is_done = task.text in answered
+        if is_done:
             lane = kanban.DONE_LANE          # already resolved, nothing left to do
         elif task.source == "keyword":
             lane = kanban.TODO_LANE          # the speaker asked for it outright
         else:
             lane = kanban.TRIAGE_LANE        # inferred, so it waits for a human look
-        by_lane.setdefault(lane, []).append(kanban.render_card(task.text, note_name))
+        by_lane.setdefault(lane, []).append(
+            kanban.render_card(task.text, note_name, done=is_done)
+        )
 
     board = kanban.board_path_for(cfg.vault_path, cfg.kanban.subfolder, book)
     kanban.ensure_board(board)
