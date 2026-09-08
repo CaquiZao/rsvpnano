@@ -1,5 +1,17 @@
 [
   {
+    "id": "ambar",
+    "name": "Âmbar",
+    "file": "ambar.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "ambar-hc",
+    "name": "Âmbar Contraste",
+    "file": "ambar-hc.toml",
+    "typeface": "literata"
+  },
+  {
     "id": "catppuccin-frappe",
     "name": "Catppuccin Frappe",
     "file": "catppuccin-frappe.toml",
@@ -36,6 +48,18 @@
     "typeface": "opendyslexic"
   },
   {
+    "id": "fosforo",
+    "name": "Fósforo",
+    "file": "fosforo.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "fosforo-hc",
+    "name": "Fósforo Contraste",
+    "file": "fosforo-hc.toml",
+    "typeface": "literata"
+  },
+  {
     "id": "gruvbox-dark",
     "name": "Gruvbox Dark",
     "file": "gruvbox-dark.toml",
@@ -60,15 +84,45 @@
     "typeface": "literata"
   },
   {
+    "id": "papel",
+    "name": "Papel",
+    "file": "papel.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "papel-escuro",
+    "name": "Papel Escuro",
+    "file": "papel-escuro.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "papel-escuro-hc",
+    "name": "Papel Escuro Contraste",
+    "file": "papel-escuro-hc.toml",
+    "typeface": "literata"
+  },
+  {
     "id": "solarized-dark",
     "name": "Solarized Dark",
     "file": "solarized-dark.toml",
     "typeface": "literata"
   },
   {
+    "id": "tinta",
+    "name": "Tinta",
+    "file": "tinta.toml",
+    "typeface": "literata"
+  },
+  {
     "id": "tokyo-night",
     "name": "Tokyo Night",
     "file": "tokyo-night.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "tokyo-night-hc",
+    "name": "Tokyo Night Contraste",
+    "file": "tokyo-night-hc.toml",
     "typeface": "literata"
   }
 ]

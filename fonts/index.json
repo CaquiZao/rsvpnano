@@ -23,6 +23,17 @@
     "shaping": false
   },
   {
+    "id": "arimo",
+    "name": "Arimo",
+    "locales": [],
+    "scripts": [
+      "Latn",
+      "Cyrl"
+    ],
+    "file": "Arimo/font.rfont4",
+    "shaping": false
+  },
+  {
     "id": "atkinson-hyperlegible",
     "name": "Atkinson Hyperlegible",
     "locales": [],
@@ -53,6 +64,49 @@
     ],
     "file": "Frank Ruhl Libre/font.rfont4",
     "shaping": true
+  },
+  {
+    "id": "ibm-plex-mono",
+    "name": "IBM Plex Mono",
+    "locales": [],
+    "scripts": [
+      "Latn",
+      "Cyrl"
+    ],
+    "file": "IBM Plex Mono/font.rfont4",
+    "shaping": false
+  },
+  {
+    "id": "inter",
+    "name": "Inter",
+    "locales": [],
+    "scripts": [
+      "Latn",
+      "Cyrl"
+    ],
+    "file": "Inter/font.rfont4",
+    "shaping": false
+  },
+  {
+    "id": "jetbrains-mono",
+    "name": "JetBrains Mono",
+    "locales": [],
+    "scripts": [
+      "Latn",
+      "Cyrl"
+    ],
+    "file": "JetBrains Mono/font.rfont4",
+    "shaping": false
+  },
+  {
+    "id": "newsreader",
+    "name": "Newsreader",
+    "locales": [],
+    "scripts": [
+      "Latn"
+    ],
+    "file": "Newsreader/font.rfont4",
+    "shaping": false
   },
   {
     "id": "noto-naskh-arabic",
@@ -112,6 +166,17 @@
       "Latn"
     ],
     "file": "OpenDyslexic/font.rfont4",
+    "shaping": false
+  },
+  {
+    "id": "source-serif-4",
+    "name": "Source Serif 4",
+    "locales": [],
+    "scripts": [
+      "Latn",
+      "Cyrl"
+    ],
+    "file": "Source Serif 4/font.rfont4",
     "shaping": false
   },
   {

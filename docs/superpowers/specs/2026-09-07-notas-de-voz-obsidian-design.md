@@ -104,13 +104,25 @@ Descobertas ao preparar o ambiente em 2026-09-08. Cada uma custou tempo e nenhum
   ```
 
   ```powershell
-  # 2. Rodar os testes apontando para ela (PowerShell, nunca Git Bash)
-  $env:Path = "<mingw64\bin>;$env:Path"
-  $env:PLATFORMIO_BUILD_FLAGS = "-L<pasta com libz.a>"
-  pio test -e native_test
+  # 2. Instalar no proprio mingw, e o -lz resolve sozinho para sempre
+  Copy-Item libz.a       <mingw64>\lib\libz.a
+  Copy-Item zlib.h,zconf.h <mingw64>\include\
+  pio test -e native_test    # sem variavel de ambiente nenhuma
   ```
 
+  **Não use `PLATFORMIO_BUILD_FLAGS="-L..."` para isso.** Foi a primeira tentativa e
+  falhou de forma silenciosa: no PowerShell, interpolar um caminho com barras invertidas
+  dentro da flag produz uma string que o SCons descarta sem avisar — a flag não aparece
+  nem no log e o erro que sobra é o mesmo `cannot find -lz`, sem pista da causa.
+  Instalar no `lib/` do mingw elimina a classe inteira de problema.
+
   Isso é um candidato natural a PR para o upstream, caso a estratégia de fork mude.
+
+- **`test/theme_catalog.test.mjs` está quebrado no upstream.** Ele lê `web/themes.js`,
+  arquivo apagado pelo commit `2b107ee refactor(web): remove legacy handwritten site`
+  sem que o teste fosse atualizado. Falha com `ENOENT` num checkout limpo, verificado
+  com `git stash`. As asserções sobre o catálogo de temas vêm antes e passam; só a
+  verificação do instalador web falha. Segundo candidato a PR.
 
 ### Baseline verificado em 2026-09-08
 
