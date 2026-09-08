@@ -43,6 +43,30 @@ def _quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def normalize_tag(tag: str) -> str:
+    """Make a tag usable in Obsidian.
+
+    Obsidian tags accept letters, digits, underscore, hyphen and forward slash —
+    never spaces. An LLM happily returns "revolução agrícola", which would render
+    as a property value that is not a working tag, so spaces become hyphens.
+    Accents are kept: Obsidian handles unicode tags fine.
+    """
+    cleaned = tag.strip().lstrip("#").strip().lower()
+    cleaned = "-".join(cleaned.split())
+    return "".join(
+        ch for ch in cleaned if ch.isalnum() or ch in "_-/"
+    ).strip("-")
+
+
+def normalize_tags(tags: list[str]) -> list[str]:
+    seen: dict[str, None] = {}
+    for tag in tags:
+        normalized = normalize_tag(tag)
+        if normalized:
+            seen.setdefault(normalized, None)
+    return list(seen)
+
+
 def render(note: NoteData) -> str:
     lines = [
         "---",
@@ -51,7 +75,7 @@ def render(note: NoteData) -> str:
         f"duration: {round(note.duration_s)}s",
         "source: rsvp-nano",
         f"asr_model: {note.asr_model}",
-        f"tags: [{', '.join(note.tags)}]",
+        f"tags: [{', '.join(normalize_tags(note.tags))}]",
     ]
     if note.book:
         lines.append(f'book: "[[{note.book}]]"')

@@ -80,6 +80,26 @@ def test_render_quotes_excerpt_even_without_book():
     assert "book:" not in out
 
 
+def test_tags_with_spaces_become_hyphenated():
+    # Obsidian tags accept letters, digits, _, - and / — never spaces.
+    out = render(sample(tags=["revolução agrícola", "ganho demográfico"]))
+    assert "tags: [revolução-agrícola, ganho-demográfico]" in out
+
+
+def test_tags_are_lowercased_and_stripped_of_hash():
+    out = render(sample(tags=["#História", "  Debate  "]))
+    assert "tags: [história, debate]" in out
+
+
+def test_tags_keep_nested_slashes():
+    assert "tags: [leitura/sapiens]" in render(sample(tags=["leitura/sapiens"]))
+
+
+def test_empty_tags_are_dropped():
+    out = render(sample(tags=["ideia", "", "  ", "#"]))
+    assert "tags: [ideia]" in out
+
+
 def test_slugify_replaces_reserved_path_chars_and_keeps_accents():
     assert slugify("Ideia: captura/voz?") == "Ideia captura-voz"
     assert slugify("Gravação de áudio") == "Gravação de áudio"
