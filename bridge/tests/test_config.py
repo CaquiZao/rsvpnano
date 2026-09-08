@@ -122,3 +122,85 @@ model   = ""
 """,
             )
         )
+
+
+BASE = """
+vault_path   = "{vault}"
+inbox_folder = "Inbox"
+audio_store  = "{store}"
+port         = 8787
+
+[asr]
+handy_exe = "h"
+model     = "m"
+timeout_s = 900
+
+[post_process]
+enabled = true
+backend = "claude_cli"
+model   = "haiku"
+"""
+
+
+def base_cfg(tmp_path, extra: str = ""):
+    vault = tmp_path / "Reading"
+    vault.mkdir(exist_ok=True)
+    body = BASE.format(vault=vault.as_posix(), store=(tmp_path / "audio").as_posix()) + extra
+    return load_config(write(tmp_path, body))
+
+
+def test_kanban_and_telegram_default_to_sane_values_when_absent(tmp_path):
+    cfg = base_cfg(tmp_path)
+    assert cfg.kanban.enabled is True
+    assert cfg.kanban.subfolder == "Quadros"
+    # Telegram fica desligado por padrao: sem token, nao ha entrega.
+    assert cfg.telegram.enabled is False
+    assert cfg.telegram.token == ""
+    assert cfg.post_process.answer_tasks is True
+
+
+def test_reads_explicit_kanban_and_telegram(tmp_path):
+    cfg = base_cfg(
+        tmp_path,
+        """
+[kanban]
+enabled   = false
+subfolder = "Boards"
+
+[telegram]
+enabled = true
+token   = "123:ABC"
+chat_id = "999"
+""",
+    )
+    assert cfg.kanban.enabled is False
+    assert cfg.kanban.subfolder == "Boards"
+    assert cfg.telegram.enabled is True
+    assert cfg.telegram.token == "123:ABC"
+    assert cfg.telegram.chat_id == "999"
+
+
+def test_telegram_enabled_without_token_is_rejected(tmp_path):
+    with pytest.raises(ConfigError, match="token"):
+        base_cfg(
+            tmp_path,
+            """
+[telegram]
+enabled = true
+token   = ""
+chat_id = "999"
+""",
+        )
+
+
+def test_telegram_enabled_without_chat_id_is_rejected(tmp_path):
+    with pytest.raises(ConfigError, match="chat_id"):
+        base_cfg(
+            tmp_path,
+            """
+[telegram]
+enabled = true
+token   = "123:ABC"
+chat_id = ""
+""",
+        )

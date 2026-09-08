@@ -13,6 +13,7 @@ from handy_bridge.config import ConfigError, load_config
 from handy_bridge.discovery import advertise
 from handy_bridge.postprocess import build as build_processor
 from handy_bridge.server import create_app
+from handy_bridge.telegram import TelegramSender
 from handy_bridge.worker import NoteWorker
 
 
@@ -34,7 +35,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
 
-    worker = NoteWorker(cfg, processor)
+    telegram = None
+    if cfg.telegram.enabled:
+        telegram = TelegramSender(cfg.telegram.token, cfg.telegram.chat_id)
+        logging.getLogger(__name__).info("Telegram delivery enabled")
+
+    worker = NoteWorker(cfg, processor, telegram=telegram)
     worker.start()
 
     zc = None

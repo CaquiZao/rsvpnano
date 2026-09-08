@@ -16,6 +16,7 @@ def sample(**over) -> NoteData:
         book=None,
         word_offset=None,
         excerpt=None,
+        answers=[],
     )
     base.update(over)
     return NoteData(**base)
@@ -125,3 +126,33 @@ def test_write_note_leaves_no_temp_files(tmp_path):
     inbox = tmp_path / "Inbox"
     write_note(inbox, sample())
     assert [p.name for p in inbox.iterdir() if p.suffix != ".md"] == []
+
+
+def test_render_includes_answered_questions():
+    out = render(
+        sample(
+            answers=[
+                ("O que foi o Big Bang?", "O evento inicial do universo."),
+                ("Quem foi Harari?", "O autor do livro."),
+            ]
+        )
+    )
+    assert "> [!question] O que foi o Big Bang?" in out
+    assert "> O evento inicial do universo." in out
+    assert "> [!question] Quem foi Harari?" in out
+    # A ordem das perguntas e preservada
+    assert out.index("Big Bang") < out.index("Harari")
+
+
+def test_render_without_answers_has_no_question_callout():
+    assert "[!question]" not in render(sample())
+
+
+def test_multiline_answer_is_fully_quoted():
+    out = render(sample(answers=[("q", "linha um\nlinha dois")]))
+    assert "> linha um\n> linha dois" in out
+
+
+def test_answers_come_before_the_raw_transcript():
+    out = render(sample(answers=[("q", "a")]))
+    assert out.index("[!question]") < out.index("Transcrição original")

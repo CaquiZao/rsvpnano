@@ -25,6 +25,20 @@ class PostProcessConfig:
     enabled: bool
     backend: str
     model: str
+    answer_tasks: bool = True
+
+
+@dataclass(frozen=True)
+class KanbanConfig:
+    enabled: bool = True
+    subfolder: str = "Quadros"
+
+
+@dataclass(frozen=True)
+class TelegramConfig:
+    enabled: bool = False
+    token: str = ""
+    chat_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -35,6 +49,9 @@ class Config:
     port: int
     asr: AsrConfig
     post_process: PostProcessConfig
+    # Optional sections: an older config.toml without them keeps working.
+    kanban: KanbanConfig = KanbanConfig()
+    telegram: TelegramConfig = TelegramConfig()
 
     @property
     def inbox_path(self) -> Path:
@@ -71,6 +88,20 @@ def load_config(path: Path) -> Config:
             f"unknown backend '{backend}'; expected one of {sorted(VALID_BACKENDS)}"
         )
 
+    kanban_raw = raw.get("kanban", {})
+    tg_raw = raw.get("telegram", {})
+
+    telegram = TelegramConfig(
+        enabled=bool(tg_raw.get("enabled", False)),
+        token=str(tg_raw.get("token", "")).strip(),
+        chat_id=str(tg_raw.get("chat_id", "")).strip(),
+    )
+    # Fail loudly at startup rather than silently never delivering.
+    if telegram.enabled and not telegram.token:
+        raise ConfigError("[telegram] enabled but token is empty")
+    if telegram.enabled and not telegram.chat_id:
+        raise ConfigError("[telegram] enabled but chat_id is empty")
+
     return Config(
         vault_path=vault_path,
         inbox_folder=_require(raw, "inbox_folder", "config"),
@@ -85,5 +116,11 @@ def load_config(path: Path) -> Config:
             enabled=bool(_require(pp_raw, "enabled", "[post_process]")),
             backend=backend,
             model=pp_raw.get("model", ""),
+            answer_tasks=bool(pp_raw.get("answer_tasks", True)),
         ),
+        kanban=KanbanConfig(
+            enabled=bool(kanban_raw.get("enabled", True)),
+            subfolder=str(kanban_raw.get("subfolder", "Quadros")),
+        ),
+        telegram=telegram,
     )

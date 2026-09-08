@@ -131,6 +131,45 @@ nasceu dentro do leitor. Uma nota solta omite os três.
 Escrita é **atômica** (arquivo temporário + rename) porque o vault vive dentro do
 OneDrive e escrita parcial pode virar cópia de conflito.
 
+## Pendências viram cartões no Kanban
+
+A mesma chamada de LLM que gera título e tags também extrai pendências, cada uma
+classificada por como você a expressou:
+
+| Como você falou | Raia do quadro |
+|---|---|
+| Disse uma palavra marcadora — *pendência*, *tarefa*, *anotar* — seguida de uma ação | **A pesquisar** |
+| Não disse a palavra, mas havia intenção clara de estudar algo | **Triagem** |
+| Era uma dúvida conceitual e o bridge já respondeu | **Concluído** |
+
+A extração é **deliberadamente conservadora**: em dúvida entre pendência e comentário,
+o modelo omite. Um quadro com pendências inventadas é pior que um quadro incompleto,
+porque você para de confiar nele.
+
+Um quadro por livro em `Quadros/<livro>.md`; notas gravadas fora da leitura vão para
+`Quadros/Geral.md`. Cada cartão linka de volta para a nota, então o contexto não se
+perde. O formato do arquivo foi extraído do código do plugin obsidian-kanban 2.0.51, e
+a inserção é por linha — o bloco `%% kanban:settings` nunca é tocado.
+
+## Respostas automáticas no Telegram
+
+Quando uma pendência é uma dúvida conceitual respondível de imediato, o bridge responde
+em no máximo ~120 palavras, **ancorada no trecho do livro que você estava lendo**, grava
+a resposta na própria nota num callout `[!question]` e manda para o seu Telegram.
+
+Todas as perguntas de uma nota são respondidas em **uma única chamada**. Uma chamada por
+pergunta multiplicaria os ~30 mil tokens de system prompt que cada invocação do
+`claude -p` carrega.
+
+Para ativar: crie um bot com o [@BotFather](https://t.me/botfather) (`/newbot`), cole o
+token no `config.toml` e descubra seu `chat_id` falando com o bot e abrindo
+`https://api.telegram.org/bot<TOKEN>/getUpdates`. Sem token, tudo o mais funciona — só
+não há entrega no celular.
+
+**Toda resposta automática vai com um aviso** de que não foi verificada. Uma resposta que
+chega sozinha no celular é lida com menos ceticismo que uma que você foi buscar, e em
+qualquer coisa factual recente ou numérica o risco de erro é real.
+
 ## Livro como contexto
 
 Quando uma nota chega com `book`, o bridge converte o `.epub` correspondente do vault

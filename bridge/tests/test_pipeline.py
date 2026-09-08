@@ -219,3 +219,197 @@ def test_transcription_failure_propagates(tmp_path):
 
     with pytest.raises(TranscriptionError):
         process_note(incoming, cfg, transcribe_fn=boom, processor=None)
+
+
+# --- tarefas, quadro e telegram ------------------------------------------
+
+from handy_bridge import kanban  # noqa: E402
+from handy_bridge.config import KanbanConfig, TelegramConfig  # noqa: E402
+from handy_bridge.postprocess import Answer, PostProcessResult as PPR, Task  # noqa: E402
+
+
+class RichProcessor:
+    """Dublê que registra as chamadas de resposta em lote."""
+
+    def __init__(self, result, answers=None, answer_error=None):
+        self.result = result
+        self.answers = answers or []
+        self.answer_error = answer_error
+        self.answer_calls = []
+
+    def process(self, transcript):
+        return self.result
+
+    def answer_tasks(self, questions, excerpt):
+        self.answer_calls.append((list(questions), excerpt))
+        if self.answer_error:
+            raise self.answer_error
+        return self.answers
+
+
+class RecordingTelegram:
+    def __init__(self, error=None):
+        self.sent = []
+        self.error = error
+
+    def send(self, text):
+        if self.error:
+            raise self.error
+        self.sent.append(text)
+        return 1
+
+
+def cfg_with(tmp_path, *, kanban_on=True):
+    cfg = make_cfg(tmp_path)
+    return Config(
+        vault_path=cfg.vault_path,
+        inbox_folder=cfg.inbox_folder,
+        audio_store=cfg.audio_store,
+        port=cfg.port,
+        asr=cfg.asr,
+        post_process=cfg.post_process,
+        kanban=KanbanConfig(enabled=kanban_on, subfolder="Quadros"),
+        telegram=TelegramConfig(),
+    )
+
+
+def reading_note(tmp_path, name="n"):
+    return IncomingNote(
+        name,
+        make_wav(tmp_path / f"{name}.wav"),
+        {
+            "clock_synced": True,
+            "recorded_at": "2026-09-07T14:32:11",
+            "book": "sapiens",
+            "excerpt": "a Revolução Agrícola",
+        },
+    )
+
+
+def test_answerable_task_is_answered_and_lands_in_the_note(tmp_path):
+    cfg = cfg_with(tmp_path)
+    proc = RichProcessor(
+        PPR("T", [], "C", tasks=[Task("O que foi o Big Bang?", "keyword", True)]),
+        answers=[Answer("O que foi o Big Bang?", "O evento inicial.")],
+    )
+    path = process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc)
+
+    assert proc.answer_calls == [(["O que foi o Big Bang?"], "a Revolução Agrícola")]
+    text = path.read_text(encoding="utf-8")
+    assert "> [!question] O que foi o Big Bang?" in text
+    assert "O evento inicial." in text
+
+
+def test_non_answerable_task_does_not_trigger_a_second_call(tmp_path):
+    cfg = cfg_with(tmp_path)
+    proc = RichProcessor(PPR("T", [], "C", tasks=[Task("Reler o capitulo", "keyword", False)]))
+    process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc)
+    assert proc.answer_calls == []
+
+
+def test_cards_land_in_the_lane_that_matches_their_source(tmp_path):
+    cfg = cfg_with(tmp_path)
+    proc = RichProcessor(
+        PPR("T", [], "C", tasks=[
+            Task("Explicita", "keyword", False),
+            Task("Inferida", "inferred", False),
+            Task("Respondida", "keyword", True),
+        ]),
+        answers=[Answer("Respondida", "pronto")],
+    )
+    process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc)
+
+    board = (cfg.vault_path / "Quadros" / "sapiens.md").read_text(encoding="utf-8")
+    lines = board.splitlines()
+
+    def lane_cards(lane):
+        at = lines.index(f"## {lane}")
+        out = []
+        for line in lines[at + 1 :]:
+            if line.startswith("## ") or line.startswith("%%"):
+                break
+            if line.startswith("- [ ]"):
+                out.append(line)
+        return out
+
+    assert any("Explicita" in c for c in lane_cards(kanban.TODO_LANE))
+    assert any("Inferida" in c for c in lane_cards(kanban.TRIAGE_LANE))
+    # A respondida ja esta resolvida, entao vai direto para Concluido
+    assert any("Respondida" in c for c in lane_cards(kanban.DONE_LANE))
+
+
+def test_card_links_back_to_the_note(tmp_path):
+    cfg = cfg_with(tmp_path)
+    proc = RichProcessor(PPR("Meu titulo", [], "C", tasks=[Task("Uma tarefa", "keyword", False)]))
+    path = process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc)
+    board = (cfg.vault_path / "Quadros" / "sapiens.md").read_text(encoding="utf-8")
+    assert f"[[{path.stem}]]" in board
+
+
+def test_note_without_a_book_uses_the_general_board(tmp_path):
+    cfg = cfg_with(tmp_path)
+    incoming = IncomingNote(
+        "n", make_wav(tmp_path / "n.wav"),
+        {"clock_synced": True, "recorded_at": "2026-09-07T14:32:11"},
+    )
+    proc = RichProcessor(PPR("T", [], "C", tasks=[Task("Solta", "keyword", False)]))
+    process_note(incoming, cfg, transcribe_fn=ok_transcribe(), processor=proc)
+    assert (cfg.vault_path / "Quadros" / "Geral.md").exists()
+
+
+def test_kanban_disabled_creates_no_board(tmp_path):
+    cfg = cfg_with(tmp_path, kanban_on=False)
+    proc = RichProcessor(PPR("T", [], "C", tasks=[Task("Uma", "keyword", False)]))
+    process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc)
+    assert not (cfg.vault_path / "Quadros").exists()
+
+
+def test_no_tasks_creates_no_board(tmp_path):
+    cfg = cfg_with(tmp_path)
+    proc = RichProcessor(PPR("T", [], "C", tasks=[]))
+    process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc)
+    assert not (cfg.vault_path / "Quadros").exists()
+
+
+def test_answering_failure_still_writes_the_note(tmp_path):
+    cfg = cfg_with(tmp_path)
+    proc = RichProcessor(
+        PPR("T", [], "C", tasks=[Task("q", "keyword", True)]),
+        answer_error=PostProcessError("modelo caiu"),
+    )
+    path = process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc)
+    assert path.exists()
+    assert "[!question]" not in path.read_text(encoding="utf-8")
+
+
+def test_telegram_receives_the_answer(tmp_path):
+    cfg = cfg_with(tmp_path)
+    proc = RichProcessor(
+        PPR("T", [], "C", tasks=[Task("O que foi o Big Bang?", "keyword", True)]),
+        answers=[Answer("O que foi o Big Bang?", "O evento inicial.")],
+    )
+    tg = RecordingTelegram()
+    process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc, telegram=tg)
+    assert len(tg.sent) == 1
+    assert "O que foi o Big Bang?" in tg.sent[0]
+    assert "O evento inicial." in tg.sent[0]
+
+
+def test_telegram_failure_still_writes_the_note(tmp_path):
+    cfg = cfg_with(tmp_path)
+    proc = RichProcessor(
+        PPR("T", [], "C", tasks=[Task("q", "keyword", True)]),
+        answers=[Answer("q", "a")],
+    )
+    tg = RecordingTelegram(error=RuntimeError("sem rede"))
+    path = process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc, telegram=tg)
+    assert path.exists()
+    assert "[!question] q" in path.read_text(encoding="utf-8")
+
+
+def test_telegram_not_called_when_there_is_nothing_answered(tmp_path):
+    cfg = cfg_with(tmp_path)
+    proc = RichProcessor(PPR("T", [], "C", tasks=[Task("x", "inferred", False)]))
+    tg = RecordingTelegram()
+    process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc, telegram=tg)
+    assert tg.sent == []

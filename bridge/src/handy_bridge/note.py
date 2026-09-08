@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +25,9 @@ class NoteData:
     book: str | None = None
     word_offset: int | None = None
     excerpt: str | None = None
+    # (question, answer) pairs already resolved for this note. Kept as plain tuples so
+    # rendering stays independent of the post-processing package.
+    answers: list[tuple[str, str]] = field(default_factory=list)
 
 
 def slugify(text: str) -> str:
@@ -90,6 +93,15 @@ def render(note: NoteData) -> str:
     if excerpt:
         lines.append("> [!quote] Trecho que eu estava lendo")
         lines += [f"> {line}" for line in excerpt.splitlines()]
+        lines.append("")
+
+    # Answers are content the user wants to read, so they render expanded — unlike the
+    # raw transcript below, which is reference material and stays collapsed.
+    for question, answer in note.answers:
+        if not question.strip() or not answer.strip():
+            continue
+        lines.append(f"> [!question] {question.strip()}")
+        lines += [f"> {line}" for line in answer.strip().splitlines()]
         lines.append("")
 
     raw = note.raw_transcript.strip()

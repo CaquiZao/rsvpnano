@@ -12,3 +12,18 @@ timeout_s = 900
 enabled = true
 backend = "claude_cli"          # claude_cli | anthropic_api | ollama | none
 model   = "claude-haiku-4-5-20251001"
+# Responde de imediato as duvidas conceituais que der. Custa uma segunda chamada
+# por nota que tenha alguma pergunta respondivel.
+answer_tasks = true
+
+[kanban]
+enabled   = true
+subfolder = "Quadros"           # um quadro por livro, mais Geral.md para notas soltas
+
+[telegram]
+# Crie um bot com o @BotFather (/newbot) e cole o token aqui.
+# Para o chat_id, fale com o bot e abra
+# https://api.telegram.org/bot<TOKEN>/getUpdates
+enabled = false
+token   = ""
+chat_id = ""
