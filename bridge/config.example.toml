@@ -1,0 +1,14 @@
+vault_path   = "C:/Users/kakam/OneDrive/Área de Trabalho/Reading"
+inbox_folder = "Inbox"
+audio_store  = "C:/Users/kakam/.handy-bridge/audio"
+port         = 8787
+
+[asr]
+handy_exe = "C:/Users/kakam/AppData/Local/Handy/handy.exe"
+model     = "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf"
+timeout_s = 900
+
+[post_process]
+enabled = true
+backend = "claude_cli"          # claude_cli | anthropic_api | ollama | none
+model   = "claude-haiku-4-5-20251001"

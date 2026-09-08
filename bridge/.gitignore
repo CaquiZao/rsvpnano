@@ -1,0 +1,7 @@
+# Local configuration with absolute machine paths — copy from config.example.toml
+config.toml
+
+.venv/
+__pycache__/
+.pytest_cache/
+*.wav

@@ -1,0 +1,124 @@
+from pathlib import Path
+
+import pytest
+
+from handy_bridge.config import ConfigError, load_config
+
+
+def write(tmp_path: Path, body: str) -> Path:
+    p = tmp_path / "config.toml"
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+def test_loads_all_fields(tmp_path):
+    vault = tmp_path / "Reading"
+    vault.mkdir()
+    cfg = load_config(
+        write(
+            tmp_path,
+            f"""
+vault_path   = "{vault.as_posix()}"
+inbox_folder = "Inbox"
+audio_store  = "{(tmp_path / 'audio').as_posix()}"
+port         = 8787
+
+[asr]
+handy_exe = "{(tmp_path / 'handy.exe').as_posix()}"
+model     = "handy-computer/x/y.gguf"
+timeout_s = 900
+
+[post_process]
+enabled = true
+backend = "claude_cli"
+model   = "claude-haiku-4-5-20251001"
+""",
+        )
+    )
+    assert cfg.vault_path == vault
+    assert cfg.inbox_folder == "Inbox"
+    assert cfg.port == 8787
+    assert cfg.asr.model == "handy-computer/x/y.gguf"
+    assert cfg.asr.timeout_s == 900
+    assert cfg.post_process.backend == "claude_cli"
+    assert cfg.post_process.model == "claude-haiku-4-5-20251001"
+
+
+def test_creates_audio_store_if_missing(tmp_path):
+    vault = tmp_path / "Reading"
+    vault.mkdir()
+    store = tmp_path / "nested" / "audio"
+    cfg = load_config(
+        write(
+            tmp_path,
+            f"""
+vault_path   = "{vault.as_posix()}"
+inbox_folder = "Inbox"
+audio_store  = "{store.as_posix()}"
+port         = 8787
+
+[asr]
+handy_exe = "{(tmp_path / 'handy.exe').as_posix()}"
+model     = "m"
+timeout_s = 900
+
+[post_process]
+enabled = false
+backend = "none"
+model   = ""
+""",
+        )
+    )
+    assert cfg.audio_store.is_dir()
+
+
+def test_rejects_missing_vault(tmp_path):
+    with pytest.raises(ConfigError, match="vault_path"):
+        load_config(
+            write(
+                tmp_path,
+                f"""
+vault_path   = "{(tmp_path / 'nope').as_posix()}"
+inbox_folder = "Inbox"
+audio_store  = "{(tmp_path / 'audio').as_posix()}"
+port         = 8787
+
+[asr]
+handy_exe = "h"
+model     = "m"
+timeout_s = 900
+
+[post_process]
+enabled = false
+backend = "none"
+model   = ""
+""",
+            )
+        )
+
+
+def test_rejects_unknown_backend(tmp_path):
+    vault = tmp_path / "Reading"
+    vault.mkdir()
+    with pytest.raises(ConfigError, match="backend"):
+        load_config(
+            write(
+                tmp_path,
+                f"""
+vault_path   = "{vault.as_posix()}"
+inbox_folder = "Inbox"
+audio_store  = "{(tmp_path / 'audio').as_posix()}"
+port         = 8787
+
+[asr]
+handy_exe = "h"
+model     = "m"
+timeout_s = 900
+
+[post_process]
+enabled = true
+backend = "gpt5"
+model   = ""
+""",
+            )
+        )
