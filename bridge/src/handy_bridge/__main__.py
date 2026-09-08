@@ -13,7 +13,9 @@ from handy_bridge.config import ConfigError, load_config
 from handy_bridge.discovery import advertise
 from handy_bridge.postprocess import build as build_processor
 from handy_bridge.server import create_app
+from handy_bridge.listener import TelegramListener
 from handy_bridge.telegram import TelegramSender
+from handy_bridge.threads import ThreadStore
 from handy_bridge.worker import NoteWorker
 
 
@@ -36,11 +38,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     telegram = None
+    threads = None
+    listener = None
     if cfg.telegram.enabled:
         telegram = TelegramSender(cfg.telegram.token, cfg.telegram.chat_id)
+        threads = ThreadStore(cfg.audio_store / "threads.json")
         logging.getLogger(__name__).info("Telegram delivery enabled")
+        if processor is not None:
+            listener = TelegramListener(telegram, processor, threads, cfg.telegram.chat_id)
+            listener.start()
+            logging.getLogger(__name__).info("Telegram follow-up listener started")
 
-    worker = NoteWorker(cfg, processor, telegram=telegram)
+    worker = NoteWorker(cfg, processor, telegram=telegram, threads=threads)
     worker.start()
 
     zc = None
@@ -55,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         uvicorn.run(app, host="0.0.0.0", port=cfg.port, log_config=None)
     finally:
+        if listener is not None:
+            listener.stop()
         if zc is not None:
             zc.close()
         worker.stop()

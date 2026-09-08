@@ -1,3 +1,5 @@
+import pytest
+
 from datetime import datetime
 
 from handy_bridge.note import NoteData, render, slugify, write_note
@@ -156,3 +158,51 @@ def test_multiline_answer_is_fully_quoted():
 def test_answers_come_before_the_raw_transcript():
     out = render(sample(answers=[("q", "a")]))
     assert out.index("[!question]") < out.index("Transcrição original")
+
+
+# --- acompanhamento no Telegram ------------------------------------------
+
+from handy_bridge.note import append_followup  # noqa: E402
+
+
+def test_append_followup_inserts_before_the_raw_transcript(tmp_path):
+    path = write_note(tmp_path / "Inbox", sample(answers=[("q1", "a1")]))
+    append_followup(path, "e isso?", "assim.")
+    text = path.read_text(encoding="utf-8")
+
+    assert "> [!question] e isso?" in text
+    assert "> assim." in text
+    # Perguntas ficam juntas, acima da transcricao crua
+    assert text.index("[!question] e isso?") < text.index("Transcrição original")
+
+
+def test_append_followup_appends_at_the_end_when_there_is_no_transcript(tmp_path):
+    path = write_note(tmp_path / "Inbox", sample(raw_transcript=""))
+    append_followup(path, "q", "a")
+    assert path.read_text(encoding="utf-8").rstrip().endswith("> a")
+
+
+def test_several_followups_keep_their_order(tmp_path):
+    path = write_note(tmp_path / "Inbox", sample())
+    append_followup(path, "primeira", "r1")
+    append_followup(path, "segunda", "r2")
+    text = path.read_text(encoding="utf-8")
+    assert text.index("primeira") < text.index("segunda")
+
+
+def test_append_followup_quotes_a_multiline_answer(tmp_path):
+    path = write_note(tmp_path / "Inbox", sample())
+    append_followup(path, "q", "linha um\nlinha dois")
+    assert "> linha um\n> linha dois" in path.read_text(encoding="utf-8")
+
+
+def test_append_followup_leaves_no_temp_file(tmp_path):
+    inbox = tmp_path / "Inbox"
+    path = write_note(inbox, sample())
+    append_followup(path, "q", "a")
+    assert [p.name for p in inbox.iterdir() if p.suffix != ".md"] == []
+
+
+def test_append_followup_on_a_missing_file_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        append_followup(tmp_path / "nao-existe.md", "q", "a")

@@ -222,3 +222,40 @@ def test_answer_tasks_propagates_a_cli_failure():
     proc = ClaudeCliProcessor("m", runner=lambda cmd, timeout: FakeCompleted("", 1))
     with pytest.raises(PostProcessError, match="exit code 1"):
         proc.answer_tasks(["q"], excerpt=None)
+
+
+# --- acompanhamento com historico ----------------------------------------
+
+
+def test_answer_followup_returns_a_single_answer():
+    proc = ClaudeCliProcessor(
+        "m", runner=lambda cmd, timeout: FakeCompleted(wrapper('{"answer":"Mais claro assim."}'))
+    )
+    assert proc.answer_followup("e isso?", history=[], excerpt=None) == "Mais claro assim."
+
+
+def test_answer_followup_sends_the_previous_exchange():
+    seen = {}
+
+    def runner(cmd, timeout):
+        seen["cmd"] = cmd
+        return FakeCompleted(wrapper('{"answer":"ok"}'))
+
+    ClaudeCliProcessor("m", runner=runner).answer_followup(
+        "e a singularidade?",
+        history=[("O que foi o Big Bang?", "O evento inicial.")],
+        excerpt="trecho do livro",
+    )
+    joined = " ".join(seen["cmd"])
+    assert "O que foi o Big Bang?" in joined
+    assert "O evento inicial." in joined
+    assert "trecho do livro" in joined
+    assert "e a singularidade?" in joined
+
+
+def test_answer_followup_rejects_output_without_an_answer():
+    proc = ClaudeCliProcessor(
+        "m", runner=lambda cmd, timeout: FakeCompleted(wrapper('{"outro":"campo"}'))
+    )
+    with pytest.raises(PostProcessError, match="answer"):
+        proc.answer_followup("q", history=[], excerpt=None)

@@ -44,6 +44,10 @@ class PostProcessor(Protocol):
 
     def answer_tasks(self, questions: list[str], excerpt: str | None) -> list[Answer]: ...
 
+    def answer_followup(
+        self, question: str, history: list[tuple[str, str]], excerpt: str | None
+    ) -> str: ...
+
 
 def build(cfg: PostProcessConfig) -> PostProcessor | None:
     """Return a processor, or None when post-processing is switched off."""

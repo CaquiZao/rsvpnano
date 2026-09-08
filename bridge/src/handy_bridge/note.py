@@ -100,16 +100,49 @@ def render(note: NoteData) -> str:
     for question, answer in note.answers:
         if not question.strip() or not answer.strip():
             continue
-        lines.append(f"> [!question] {question.strip()}")
-        lines += [f"> {line}" for line in answer.strip().splitlines()]
-        lines.append("")
+        lines += render_qa(question, answer)
 
     raw = note.raw_transcript.strip()
     if raw:
-        lines.append("> [!note]- Transcrição original")
+        lines.append(RAW_CALLOUT)
         lines += [f"> {line}" for line in raw.splitlines()]
         lines.append("")
     return "\n".join(lines)
+
+
+RAW_CALLOUT = "> [!note]- Transcrição original"
+
+
+def render_qa(question: str, answer: str) -> list[str]:
+    lines = [f"> [!question] {question.strip()}"]
+    lines += [f"> {line}" for line in answer.strip().splitlines()]
+    lines.append("")
+    return lines
+
+
+def append_followup(path: Path, question: str, answer: str) -> Path:
+    """Add a Telegram follow-up exchange to a note that already exists.
+
+    Inserted just above the raw-transcript callout so every question and answer
+    stays together, with the literal transcript remaining last as reference.
+    """
+    path = Path(path)
+    text = path.read_text(encoding="utf-8")  # raises FileNotFoundError by design
+    lines = text.splitlines()
+
+    block = render_qa(question, answer)
+    if RAW_CALLOUT in lines:
+        at = lines.index(RAW_CALLOUT)
+        lines[at:at] = block
+    else:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines += block
+
+    tmp = path.with_name(path.name + ".partial")
+    tmp.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return path
 
 
 def _unique_path(inbox: Path, stem: str) -> Path:

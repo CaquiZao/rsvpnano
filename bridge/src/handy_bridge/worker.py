@@ -29,11 +29,13 @@ class NoteWorker:
         processor: PostProcessor | None,
         transcribe_fn: Callable[..., Transcription] = default_transcribe,
         telegram: object | None = None,
+        threads: object | None = None,
     ):
         self._cfg = cfg
         self._processor = processor
         self._transcribe_fn = transcribe_fn
         self._telegram = telegram
+        self._threads = threads
         self._queue: queue.Queue = queue.Queue()
         self._thread: threading.Thread | None = None
 
@@ -63,6 +65,7 @@ class NoteWorker:
                     transcribe_fn=self._transcribe_fn,
                     processor=self._processor,
                     telegram=self._telegram,
+                    threads=self._threads,
                 )
                 log.info("wrote note %s -> %s", item.note_id, path.name)
             except Exception:

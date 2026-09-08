@@ -6,7 +6,9 @@ from handy_bridge.telegram import TelegramError, TelegramSender, build_message
 class FakeResponse:
     def __init__(self, status: int = 200, payload: dict | None = None):
         self.status_code = status
-        self._payload = payload if payload is not None else {"ok": True}
+        self._payload = (
+            payload if payload is not None else {"ok": True, "result": {"message_id": 42}}
+        )
 
     def json(self) -> dict:
         return self._payload
@@ -71,3 +73,36 @@ def test_build_message_carries_the_reliability_warning():
     text = build_message("q", "a", None)
     # A resposta chega sem o usuario ter pedido naquele momento, entao vem com aviso.
     assert "sem verifica" in text.lower() or "confira" in text.lower()
+
+
+def test_send_returns_the_message_id_of_the_first_chunk():
+    sender = TelegramSender("t", "c", poster=lambda u, d, ti: FakeResponse())
+    assert sender.send("oi") == 42
+
+
+def test_reply_to_is_attached_only_to_the_first_chunk():
+    seen = []
+    sender = TelegramSender("t", "c", poster=lambda u, d, ti: (seen.append(d), FakeResponse())[1])
+    sender.send("a" * 5000, reply_to=7)
+    assert seen[0]["reply_to_message_id"] == 7
+    assert "reply_to_message_id" not in seen[1]
+
+
+def test_poll_returns_the_updates():
+    resp = FakeResponse(200, {"ok": True, "result": [{"update_id": 1}, {"update_id": 2}]})
+    got = TelegramSender("t", "c", poster=lambda u, d, ti: resp).poll(offset=0)
+    assert [u["update_id"] for u in got] == [1, 2]
+
+
+def test_poll_passes_the_offset_so_updates_are_not_reprocessed():
+    seen = {}
+    resp = FakeResponse(200, {"ok": True, "result": []})
+
+    def poster(url, data, timeout):
+        seen["url"] = url
+        seen.update(data)
+        return resp
+
+    TelegramSender("t", "c", poster=poster).poll(offset=99)
+    assert seen["offset"] == 99
+    assert seen["url"].endswith("/getUpdates")

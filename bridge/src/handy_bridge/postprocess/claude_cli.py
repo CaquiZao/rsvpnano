@@ -41,6 +41,16 @@ ANSWER_PROMPT = (
     "Se não souber com segurança, diga isso em uma frase em vez de especular.\n"
 )
 
+FOLLOWUP_PROMPT = (
+    "Você está esclarecendo uma dúvida de alguém que está lendo um livro e que "
+    "achou a resposta anterior insuficiente. "
+    "Responda APENAS com um objeto JSON válido, sem cercas de código, no formato "
+    '{"answer": string}.\n'
+    "A resposta deve ter NO MÁXIMO 150 palavras, ser direta e atacar exatamente o que "
+    "ficou obscuro. Não repita o que já foi dito antes. Não comece com introduções. "
+    "Se não souber com segurança, diga isso em uma frase em vez de especular.\n"
+)
+
 _REQUIRED = ("title", "tags", "cleaned")
 _VALID_SOURCES = ("keyword", "inferred")
 
@@ -207,3 +217,22 @@ class ClaudeCliProcessor:
             if question and answer:
                 answers.append(Answer(question=question, answer=answer))
         return answers
+
+    def answer_followup(
+        self, question: str, history: list[tuple[str, str]], excerpt: str | None
+    ) -> str:
+        """Answer a Telegram follow-up, given the exchange so far."""
+        parts = [FOLLOWUP_PROMPT]
+        if excerpt:
+            parts.append(f"\nTrecho do livro:\n{excerpt}\n")
+        if history:
+            parts.append("\nConversa até agora:\n")
+            for asked, replied in history:
+                parts.append(f"P: {asked}\nR: {replied}\n")
+        parts.append(f"\nNova pergunta:\n{question}\n")
+
+        payload = self._run("".join(parts))
+        answer = str(payload.get("answer", "")).strip()
+        if not answer:
+            raise PostProcessError("model output has no 'answer' field")
+        return answer

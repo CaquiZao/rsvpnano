@@ -63,6 +63,7 @@ def process_note(
     processor: PostProcessor | None = None,
     now: Callable[[], datetime] = datetime.now,
     telegram: object | None = None,
+    threads: object | None = None,
 ) -> Path:
     arrived_at = now()
 
@@ -141,9 +142,14 @@ def process_note(
     if telegram is not None and answers:
         for answer in answers:
             try:
-                telegram.send(build_message(answer.question, answer.answer, book))
+                message_id = telegram.send(build_message(answer.question, answer.answer, book))
             except Exception as exc:
                 log.warning("could not deliver an answer over Telegram: %s", exc)
+                continue
+            # Remember which note this message belongs to, so replying to it on the
+            # phone lands the follow-up in the right place.
+            if threads is not None and message_id:
+                threads.remember(message_id, note_path, answer.question, answer.answer)
 
     return note_path
 
