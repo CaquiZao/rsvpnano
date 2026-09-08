@@ -1,4 +1,8 @@
 #include "app/App.h"
+
+#if defined(RSVP_VOICE_SELFTEST) && RSVP_VOICE_SELFTEST
+#include "voice/VoiceCapture.h"
+#endif
 #include <esp_log.h>
 
 #include <array>
@@ -94,6 +98,23 @@ void App::begin() {
     Logger::startupCheckpoint("book");
     libraryScreen_.invalidate();
     ESP_LOGI("startup", "ready");
+
+#if defined(RSVP_VOICE_SELFTEST) && RSVP_VOICE_SELFTEST
+    // Throwaway scaffold from plan 2a: records ten seconds at boot so the I2S
+    // full-duplex path, the microphone gain and the SD throughput can be judged from a
+    // file you can actually listen to. Removed in plan 2b once the real trigger exists.
+    if (storage_.mounted()) {
+        const auto capture = voice::captureToFile("/voice-selftest.wav", 10000);
+        ESP_LOGI("voice", "selftest ok=%d ms=%u frames=%u error=%s", capture.ok ? 1 : 0,
+                 static_cast<unsigned>(capture.durationMs),
+                 static_cast<unsigned>(capture.framesWritten),
+                 capture.error != nullptr ? capture.error : "none");
+        // Proves playback still works after capturing on the same I2S peripheral.
+        ESP_LOGI("voice", "selftest beep=%d", Board::Audio::beep() ? 1 : 0);
+    } else {
+        ESP_LOGW("voice", "selftest skipped: no SD card mounted");
+    }
+#endif
 }
 
 void App::update(uint32_t nowMs) {

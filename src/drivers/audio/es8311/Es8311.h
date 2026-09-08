@@ -8,7 +8,7 @@ namespace BoardDrivers::Es8311 {
 
     struct Context {
         Context(TwoWire& wire, uint8_t address, i2s_port_t i2sPort, int mclkPin, int bclkPin, int wsPin, int dataOutPin,
-                uint32_t sampleRateHz = 16000) :
+                uint32_t sampleRateHz = 16000, int dataInPin = -1) :
                 wire(wire),
                 address(address),
                 i2sPort(i2sPort),
@@ -17,6 +17,7 @@ namespace BoardDrivers::Es8311 {
                 bclkPin(bclkPin),
                 wsPin(wsPin),
                 dataOutPin(dataOutPin),
+                dataInPin(dataInPin),
                 sampleRateHz(sampleRateHz) {}
 
         TwoWire& wire;
@@ -27,6 +28,8 @@ namespace BoardDrivers::Es8311 {
         int bclkPin = -1;
         int wsPin = -1;
         int dataOutPin = -1;
+        // Defaults to -1 so the other platforms stay output-only without any change.
+        int dataInPin = -1;
         uint32_t sampleRateHz = 16000;
         bool available = false;
         bool i2sInitialized = false;
@@ -36,6 +39,8 @@ namespace BoardDrivers::Es8311 {
     bool prepareOutput(Context& context);
     bool recoverOutputPath(Context& context);
     bool writeSamples(Context& context, const int16_t* samples, size_t sampleCount, uint32_t timeoutMs);
+    bool prepareInput(Context& context);
+    size_t readSamples(Context& context, int16_t* samples, size_t sampleCount, uint32_t timeoutMs);
     bool available(const Context& context);
 
 } // namespace BoardDrivers::Es8311

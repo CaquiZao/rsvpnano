@@ -29,6 +29,10 @@ namespace BoardDrivers::Es8311 {
         constexpr uint8_t kAdcReg15 = 0x15;
         constexpr uint8_t kAdcReg16 = 0x16;
         constexpr uint8_t kAdcReg17 = 0x17;
+        constexpr uint8_t kAdcVolumeMax = 0xBF;
+        // Bits 3:0 of register 0x14 are the analog microphone PGA gain. 0x1A is what
+        // configureCodec() already writes; tuned against real recordings in task 5.
+        constexpr uint8_t kMicPgaGain = 0x1A;
         constexpr uint8_t kAdcReg1B = 0x1B;
         constexpr uint8_t kAdcReg1C = 0x1C;
         constexpr uint8_t kDacReg31 = 0x31;
@@ -67,7 +71,8 @@ namespace BoardDrivers::Es8311 {
             }
 
             context.i2s.setPort(context.i2sPort);
-            context.i2s.setPins(context.bclkPin, context.wsPin, context.dataOutPin, -1, context.mclkPin);
+            context.i2s.setPins(context.bclkPin, context.wsPin, context.dataOutPin, context.dataInPin,
+                                context.mclkPin);
             if (!context.i2s.begin(I2S_MODE_STD, context.sampleRateHz, I2S_DATA_BIT_WIDTH_16BIT,
                                    I2S_SLOT_MODE_STEREO)) {
                 ESP_LOGW(kTag, "Failed to start I2S TX: %d", context.i2s.lastError());
@@ -229,6 +234,35 @@ namespace BoardDrivers::Es8311 {
         }
 
         return true;
+    }
+
+    bool prepareInput(Context& context) {
+        if (context.dataInPin < 0) {
+            ESP_LOGW(kTag, "No input pin wired for this board");
+            return false;
+        }
+        // begin() is idempotent, and ESP_I2S allocates the RX channel alongside TX as
+        // soon as both data pins are set, so capture and beep share one peripheral.
+        if (!begin(context)) {
+            return false;
+        }
+        // configureCodec() already routed and clocked the ADC; this only lifts the
+        // capture volume and applies the microphone PGA gain.
+        return writeRegister(context, kAdcReg17, kAdcVolumeMax)
+            && writeRegister(context, kSystemReg14, kMicPgaGain);
+    }
+
+    size_t readSamples(Context& context, int16_t* samples, size_t sampleCount, uint32_t timeoutMs) {
+        if (!available(context) || samples == nullptr || sampleCount == 0) {
+            return 0;
+        }
+        context.i2s.setTimeout(timeoutMs);
+        const size_t wanted = sampleCount * sizeof(int16_t);
+        const size_t read = context.i2s.readBytes(reinterpret_cast<char*>(samples), wanted);
+        if (read == 0) {
+            ESP_LOGW(kTag, "Sample read failed: %d", context.i2s.lastError());
+        }
+        return read / sizeof(int16_t);
     }
 
     bool available(const Context& context) {

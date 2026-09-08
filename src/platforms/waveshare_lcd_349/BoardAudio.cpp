@@ -16,6 +16,8 @@ namespace {
         WaveshareLcd349::AudioWiring::kBclkPin,
         WaveshareLcd349::AudioWiring::kWsPin,
         WaveshareLcd349::AudioWiring::kDoutPin,
+        16000,
+        WaveshareLcd349::AudioWiring::kDinPin,
     };
 
 } // namespace
@@ -32,6 +34,19 @@ namespace Board::Audio {
 
     bool available() {
         return BoardPlatform::Es8311BoardAudio::available(gAudioContext);
+    }
+
+    bool prepareInput() {
+        return BoardPlatform::Es8311BoardAudio::prepareInput(gAudioContext);
+    }
+
+    size_t readSamples(int16_t* samples, size_t sampleCount, uint32_t timeoutMs) {
+        return BoardPlatform::Es8311BoardAudio::readSamples(gAudioContext, samples, sampleCount, timeoutMs);
+    }
+
+    bool inputAvailable() {
+        return WaveshareLcd349::AudioWiring::kDinPin >= 0
+            && BoardPlatform::Es8311BoardAudio::available(gAudioContext);
     }
 
 } // namespace Board::Audio

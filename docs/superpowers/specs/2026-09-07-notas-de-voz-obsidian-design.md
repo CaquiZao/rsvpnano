@@ -124,6 +124,12 @@ Descobertas ao preparar o ambiente em 2026-09-08. Cada uma custou tempo e nenhum
   com `git stash`. As asserções sobre o catálogo de temas vêm antes e passam; só a
   verificação do instalador web falha. Segundo candidato a PR.
 
+- **Nunca rode dois processos `pio` ao mesmo tempo neste projeto.** `pio run` e
+  `pio test` compartilham `.pio/build/`, e o banco de assinaturas do SCons não tolera
+  acesso concorrente. O sintoma é enganoso: um teste qualquer falha com
+  `FileNotFoundError: ...sconsign314.tmp`, o que parece defeito do teste ou do código
+  recém-escrito, quando é apenas corrupção de cache. Rode em série.
+
 ### Baseline verificado em 2026-09-08
 
 | Verificação | Resultado |
@@ -247,10 +253,32 @@ gravação** — serve para revisar o que foi capturado.
 
 O gatilho da gravação vive no leitor (D7), não aqui.
 
-#### Estados durante a gravação, sinalizados no leitor
+#### Tela de gravação (decidido em 2026-09-08)
 
-A gravação acontece **sobre a tela de leitura**, com um indicador discreto para não
-competir com o texto. Cada transição toca um som (D-sonoro):
+A gravação **toma a tela inteira** com uma onda de áudio centralizada, mais o tempo
+decorrido e a instrução de como parar. A leitura pausa.
+
+Três razões para tomar a tela em vez de sobrepor um indicador discreto:
+
+1. **Não há ambiguidade.** Gravando é um estado que não pode ser confundido com
+   qualquer outro, e a faixa de 640×172 é estreita demais para um indicador pequeno
+   competir com o texto sem virar ruído.
+2. **Elimina o conflito de desempenho.** Animar uma onda enquanto o renderizador do
+   leitor desenha palavras competiria com um caminho que o autor otimizou com
+   benchmarks de WPM. Com a leitura pausada, não há concorrência.
+3. **Não finge que dá para ler e ditar ao mesmo tempo.** Manter o RSVP rodando durante
+   a gravação sugeriria isso, e na prática não dá.
+
+O nível de áudio sai de graça: o laço de captura já lê blocos de ~0,5 s, então o pico
+de cada bloco é uma passada num array que já está na memória. Nenhum custo além do que
+a gravação já paga.
+
+As cores vêm dos tokens do tema ativo (`accent` para a onda, `foreground` para o texto,
+`subtle` para a instrução), então a tela acompanha o tema automaticamente.
+
+#### Estados e som
+
+Cada transição toca um som (D-sonoro):
 
 | Estado | Sinal visual | Som |
 |---|---|---|

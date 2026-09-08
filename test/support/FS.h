@@ -36,8 +36,17 @@ class File {
 
   size_t write(const uint8_t *data, size_t size) {
     if (data == nullptr) return 0;
-    data_->append(reinterpret_cast<const char *>(data), size);
-    position_ = data_->size();
+    if (position_ > data_->size()) return 0;
+    // Overwrite in place from the current position, extending only past the end.
+    // The previous version always appended, which made seek-then-write silently wrong.
+    const size_t overwrite = std::min(size, data_->size() - position_);
+    if (overwrite > 0) {
+      std::memcpy(data_->data() + position_, data, overwrite);
+    }
+    if (overwrite < size) {
+      data_->append(reinterpret_cast<const char *>(data) + overwrite, size - overwrite);
+    }
+    position_ += size;
     return size;
   }
 
