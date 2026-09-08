@@ -469,7 +469,7 @@ git commit -m "feat(bridge): inspect and repair truncated WAV headers"
 
 **Interfaces:**
 - Consumes: nada
-- Produces: `NoteData`, `slugify(text) -> str`, `render(note: NoteData) -> str`, `write_note(inbox: Path, note: NoteData) -> Path`
+- Produces: `NoteData` (com `book`, `word_offset`, `excerpt` opcionais, `None` quando a nota não nasceu dentro do leitor), `slugify(text) -> str`, `render(note: NoteData) -> str`, `write_note(inbox: Path, note: NoteData) -> Path`
 
 - [ ] **Step 1: Escrever o teste que falha**
 
@@ -490,6 +490,9 @@ def sample(**over) -> NoteData:
         date_estimated=False,
         duration_s=47.0,
         asr_model="nemotron-3.5-asr-streaming-0.6b",
+        book=None,
+        word_offset=None,
+        excerpt=None,
     )
     base.update(over)
     return NoteData(**base)
@@ -520,6 +523,33 @@ def test_render_escapes_quotes_in_title():
 def test_multiline_raw_transcript_is_fully_quoted():
     out = render(sample(raw_transcript="linha um\nlinha dois"))
     assert "> linha um\n> linha dois" in out
+
+
+def test_render_includes_book_anchor_when_present():
+    out = render(sample(book="epdf.pub_sapiens", word_offset=12438,
+                        excerpt="a Revolução Agrícola foi a maior fraude da história"))
+    assert 'book: "[[epdf.pub_sapiens]]"' in out
+    assert "word_offset: 12438" in out
+    assert "> [!quote] Trecho que eu estava lendo" in out
+    assert "> a Revolução Agrícola foi a maior fraude da história" in out
+
+
+def test_render_omits_book_anchor_for_standalone_note():
+    out = render(sample())
+    assert "book:" not in out
+    assert "word_offset:" not in out
+    assert "[!quote]" not in out
+
+
+def test_render_allows_word_offset_zero():
+    # offset 0 is the first word of the book, not "absent"
+    assert "word_offset: 0" in render(sample(book="b", word_offset=0))
+
+
+def test_render_quotes_excerpt_even_without_book():
+    out = render(sample(excerpt="linha um\nlinha dois"))
+    assert "> linha um\n> linha dois" in out
+    assert "book:" not in out
 
 
 def test_slugify_replaces_reserved_path_chars_and_keeps_accents():
@@ -580,6 +610,10 @@ class NoteData:
     date_estimated: bool
     duration_s: float
     asr_model: str
+    # Present only when the recording was triggered from inside the reader.
+    book: str | None = None
+    word_offset: int | None = None
+    excerpt: str | None = None
 
 
 def slugify(text: str) -> str:
@@ -610,9 +644,20 @@ def render(note: NoteData) -> str:
         f"asr_model: {note.asr_model}",
         f"tags: [{', '.join(note.tags)}]",
     ]
+    if note.book:
+        lines.append(f'book: "[[{note.book}]]"')
+    # Offset 0 is the first word of the book, so compare against None explicitly.
+    if note.word_offset is not None:
+        lines.append(f"word_offset: {note.word_offset}")
     if note.date_estimated:
         lines.append("date_estimated: true")
     lines += ["---", "", note.body.strip(), ""]
+
+    excerpt = (note.excerpt or "").strip()
+    if excerpt:
+        lines.append("> [!quote] Trecho que eu estava lendo")
+        lines += [f"> {line}" for line in excerpt.splitlines()]
+        lines.append("")
 
     raw = note.raw_transcript.strip()
     if raw:
@@ -647,7 +692,7 @@ def write_note(inbox: Path, note: NoteData) -> Path:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `cd bridge && uv run pytest tests/test_note.py -v`
-Expected: PASS (8 testes)
+Expected: PASS (12 testes)
 
 - [ ] **Step 5: Commit**
 
@@ -1283,6 +1328,31 @@ def test_repairs_truncated_wav_before_transcribing(tmp_path):
     assert struct.unpack_from("<I", wav.read_bytes(), 40)[0] == 32000
 
 
+def test_carries_book_anchor_from_meta_into_the_note(tmp_path):
+    cfg = make_cfg(tmp_path)
+    incoming = IncomingNote("n", make_wav(tmp_path / "n.wav"), {
+        "clock_synced": True, "recorded_at": "2026-09-07T14:32:11",
+        "book": "epdf.pub_sapiens", "word_offset": 12438,
+        "excerpt": "a Revolução Agrícola foi a maior fraude da história",
+    })
+    path = process_note(incoming, cfg, transcribe_fn=ok_transcribe(), processor=None)
+    text = path.read_text(encoding="utf-8")
+
+    assert 'book: "[[epdf.pub_sapiens]]"' in text
+    assert "word_offset: 12438" in text
+    assert "> [!quote] Trecho que eu estava lendo" in text
+
+
+def test_standalone_note_has_no_anchor(tmp_path):
+    cfg = make_cfg(tmp_path)
+    incoming = IncomingNote("n", make_wav(tmp_path / "n.wav"),
+                            {"clock_synced": True, "recorded_at": "2026-09-07T14:32:11"})
+    text = process_note(incoming, cfg, transcribe_fn=ok_transcribe(),
+                        processor=None).read_text(encoding="utf-8")
+    assert "book:" not in text
+    assert "[!quote]" not in text
+
+
 def test_transcription_failure_propagates(tmp_path):
     cfg = make_cfg(tmp_path)
     incoming = IncomingNote("n", make_wav(tmp_path / "n.wav"), {"clock_synced": True})
@@ -1389,6 +1459,7 @@ def process_note(
             # A post-processing failure must never cost a note.
             log.warning("post-processing failed for %s: %s", incoming.note_id, exc)
 
+    word_offset = incoming.meta.get("word_offset")
     return write_note(
         cfg.inbox_path,
         NoteData(
@@ -1400,6 +1471,10 @@ def process_note(
             date_estimated=estimated,
             duration_s=info.duration_s,
             asr_model=transcription.model,
+            # Anchor fields arrive only when the device recorded from the reader.
+            book=incoming.meta.get("book") or None,
+            word_offset=int(word_offset) if word_offset is not None else None,
+            excerpt=incoming.meta.get("excerpt") or None,
         ),
     )
 ```
@@ -1407,7 +1482,7 @@ def process_note(
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `cd bridge && uv run pytest tests/test_pipeline.py -v`
-Expected: PASS (11 testes)
+Expected: PASS (13 testes)
 
 - [ ] **Step 5: Rodar a suíte inteira**
 
@@ -1998,6 +2073,320 @@ git commit -m "docs(bridge): document setup and record measured end-to-end laten
 
 ---
 
+### Task 10: Conversão do epub para markdown no vault
+
+Dá ao Claudian o livro inteiro como texto pesquisável (D13 na spec), para perguntas que
+o trecho embutido na nota não alcança. Feito com biblioteca padrão — um epub é um zip
+cuja ordem de leitura está declarada no OPF, então não precisamos de dependência nova.
+
+**Files:**
+- Create: `bridge/src/handy_bridge/epub.py`
+- Modify: `bridge/src/handy_bridge/pipeline.py` (chamada best-effort quando a nota tem `book`)
+- Test: `bridge/tests/test_epub.py`
+
+**Interfaces:**
+- Consumes: nada de tasks anteriores
+- Produces: `EpubError`, `convert_to_markdown(epub_path: Path, out_path: Path) -> Path`, `ensure_book_markdown(vault_path: Path, book_stem: str, subfolder: str = "Books") -> Path | None`
+
+- [ ] **Step 1: Escrever o teste que falha**
+
+```python
+# bridge/tests/test_epub.py
+import zipfile
+from pathlib import Path
+import pytest
+from handy_bridge.epub import convert_to_markdown, ensure_book_markdown, EpubError
+
+CONTAINER = """<?xml version="1.0"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
+  <rootfiles><rootfile full-path="OEBPS/content.opf"
+    media-type="application/oebps-package+xml"/></rootfiles>
+</container>"""
+
+OPF = """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <manifest>
+    <item id="c2" href="zeta.xhtml" media-type="application/xhtml+xml"/>
+    <item id="c1" href="alpha.xhtml" media-type="application/xhtml+xml"/>
+    <item id="css" href="s.css" media-type="text/css"/>
+  </manifest>
+  <spine>
+    <itemref idref="c2"/>
+    <itemref idref="c1"/>
+  </spine>
+</package>"""
+
+CH_ZETA = """<html xmlns="http://www.w3.org/1999/xhtml"><body>
+  <h1>Primeiro Capitulo</h1><p>Texto do primeiro.</p>
+  <style>p { color: red }</style>
+</body></html>"""
+
+CH_ALPHA = """<html xmlns="http://www.w3.org/1999/xhtml"><body>
+  <h2>Segundo Capitulo</h2><p>Texto do <em>segundo</em>.</p>
+</body></html>"""
+
+
+def make_epub(path: Path) -> Path:
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("mimetype", "application/epub+zip")
+        z.writestr("META-INF/container.xml", CONTAINER)
+        z.writestr("OEBPS/content.opf", OPF)
+        z.writestr("OEBPS/zeta.xhtml", CH_ZETA)
+        z.writestr("OEBPS/alpha.xhtml", CH_ALPHA)
+        z.writestr("OEBPS/s.css", "p{}")
+    return path
+
+
+def test_converts_and_respects_spine_order(tmp_path):
+    out = convert_to_markdown(make_epub(tmp_path / "b.epub"), tmp_path / "b.md")
+    text = out.read_text(encoding="utf-8")
+    assert "# Primeiro Capitulo" in text
+    assert "## Segundo Capitulo" in text
+    # zeta vem antes de alpha porque o spine manda, nao a ordem alfabetica
+    assert text.index("Primeiro Capitulo") < text.index("Segundo Capitulo")
+
+
+def test_keeps_inline_text_and_drops_style_blocks(tmp_path):
+    text = convert_to_markdown(make_epub(tmp_path / "b.epub"),
+                               tmp_path / "b.md").read_text(encoding="utf-8")
+    assert "Texto do segundo." in text
+    assert "color: red" not in text
+
+
+def test_rejects_non_zip(tmp_path):
+    bad = tmp_path / "bad.epub"
+    bad.write_bytes(b"not a zip")
+    with pytest.raises(EpubError, match="not a valid epub"):
+        convert_to_markdown(bad, tmp_path / "out.md")
+
+
+def test_rejects_epub_without_container(tmp_path):
+    p = tmp_path / "empty.epub"
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("mimetype", "application/epub+zip")
+    with pytest.raises(EpubError, match="container.xml"):
+        convert_to_markdown(p, tmp_path / "out.md")
+
+
+def test_ensure_creates_markdown_under_subfolder(tmp_path):
+    make_epub(tmp_path / "sapiens.epub")
+    out = ensure_book_markdown(tmp_path, "sapiens")
+    assert out is not None
+    assert out == tmp_path / "Books" / "sapiens.md"
+    assert "Primeiro Capitulo" in out.read_text(encoding="utf-8")
+
+
+def test_ensure_is_idempotent(tmp_path):
+    make_epub(tmp_path / "sapiens.epub")
+    first = ensure_book_markdown(tmp_path, "sapiens")
+    first.write_text("EDITADO A MAO", encoding="utf-8")
+    second = ensure_book_markdown(tmp_path, "sapiens")
+    # nao reconverte: o arquivo existente e preservado
+    assert second.read_text(encoding="utf-8") == "EDITADO A MAO"
+
+
+def test_ensure_returns_none_when_no_epub(tmp_path):
+    assert ensure_book_markdown(tmp_path, "inexistente") is None
+```
+
+- [ ] **Step 2: Rodar e confirmar que falha**
+
+Run: `cd bridge && uv run pytest tests/test_epub.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'handy_bridge.epub'`
+
+- [ ] **Step 3: Implementar `epub.py`**
+
+```python
+# bridge/src/handy_bridge/epub.py
+"""Convert an epub to plain markdown so an agent can read the whole book.
+
+An epub is a zip whose reading order is declared in the OPF spine, so this needs
+only the standard library: zipfile for the container, ElementTree for the OPF, and
+HTMLParser for the chapter bodies.
+"""
+from __future__ import annotations
+
+import logging
+import posixpath
+import re
+import zipfile
+from html.parser import HTMLParser
+from pathlib import Path
+from xml.etree import ElementTree
+
+log = logging.getLogger(__name__)
+
+CONTAINER_PATH = "META-INF/container.xml"
+_SKIP_TAGS = {"style", "script", "head", "title"}
+_HEADINGS = {"h1": "#", "h2": "##", "h3": "###", "h4": "####", "h5": "#####", "h6": "######"}
+_BLOCK_TAGS = {"p", "div", "br", "li", "tr", "blockquote", *_HEADINGS}
+
+
+class EpubError(Exception):
+    """Raised when a file is not a usable epub."""
+
+
+class _ChapterParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._skip_depth = 0
+        self._pending_heading: str | None = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag in _SKIP_TAGS:
+            self._skip_depth += 1
+            return
+        if tag in _HEADINGS:
+            self._parts.append("\n\n")
+            self._pending_heading = _HEADINGS[tag]
+            self._parts.append(_HEADINGS[tag] + " ")
+        elif tag in _BLOCK_TAGS:
+            self._parts.append("\n\n")
+
+    def handle_endtag(self, tag):
+        if tag in _SKIP_TAGS:
+            self._skip_depth = max(0, self._skip_depth - 1)
+            return
+        if tag in _HEADINGS:
+            self._pending_heading = None
+            self._parts.append("\n\n")
+
+    def handle_data(self, data):
+        if self._skip_depth:
+            return
+        self._parts.append(data)
+
+    def text(self) -> str:
+        joined = "".join(self._parts)
+        joined = re.sub(r"[ \t\r\f\v]+", " ", joined)
+        joined = re.sub(r" ?\n ?", "\n", joined)
+        joined = re.sub(r"\n{3,}", "\n\n", joined)
+        return joined.strip()
+
+
+def _spine_hrefs(archive: zipfile.ZipFile) -> list[str]:
+    try:
+        container = archive.read(CONTAINER_PATH)
+    except KeyError as exc:
+        raise EpubError(f"missing {CONTAINER_PATH}") from exc
+
+    root = ElementTree.fromstring(container)
+    rootfile = root.find(".//{*}rootfile")
+    if rootfile is None or not rootfile.get("full-path"):
+        raise EpubError("container.xml declares no rootfile")
+    opf_path = rootfile.get("full-path")
+
+    opf = ElementTree.fromstring(archive.read(opf_path))
+    base = posixpath.dirname(opf_path)
+    manifest = {
+        item.get("id"): item.get("href")
+        for item in opf.findall(".//{*}manifest/{*}item")
+        if item.get("id") and item.get("href")
+    }
+    hrefs = []
+    for ref in opf.findall(".//{*}spine/{*}itemref"):
+        href = manifest.get(ref.get("idref"))
+        if href:
+            hrefs.append(posixpath.normpath(posixpath.join(base, href)) if base else href)
+    return hrefs
+
+
+def convert_to_markdown(epub_path: Path, out_path: Path) -> Path:
+    epub_path, out_path = Path(epub_path), Path(out_path)
+    if not zipfile.is_zipfile(epub_path):
+        raise EpubError(f"not a valid epub (not a zip): {epub_path}")
+
+    chunks: list[str] = []
+    with zipfile.ZipFile(epub_path) as archive:
+        for href in _spine_hrefs(archive):
+            try:
+                raw = archive.read(href)
+            except KeyError:
+                log.warning("spine references a missing file: %s", href)
+                continue
+            parser = _ChapterParser()
+            parser.feed(raw.decode("utf-8", errors="replace"))
+            text = parser.text()
+            if text:
+                chunks.append(text)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out_path.with_name(out_path.name + ".partial")
+    tmp.write_text("\n\n".join(chunks) + "\n", encoding="utf-8")
+    tmp.replace(out_path)
+    return out_path
+
+
+def ensure_book_markdown(
+    vault_path: Path, book_stem: str, subfolder: str = "Books"
+) -> Path | None:
+    """Convert `<vault>/<stem>.epub` once. Returns the markdown path, or None."""
+    vault_path = Path(vault_path)
+    target = vault_path / subfolder / f"{book_stem}.md"
+    if target.exists():
+        return target
+    source = vault_path / f"{book_stem}.epub"
+    if not source.is_file():
+        log.info("no epub found for %r in %s", book_stem, vault_path)
+        return None
+    log.info("converting %s -> %s", source.name, target)
+    return convert_to_markdown(source, target)
+```
+
+- [ ] **Step 4: Rodar e confirmar que passa**
+
+Run: `cd bridge && uv run pytest tests/test_epub.py -v`
+Expected: PASS (7 testes)
+
+- [ ] **Step 5: Ligar no pipeline, sem poder derrubar a nota**
+
+Em `pipeline.py`, acrescentar o import e o bloco antes do `return write_note(...)`:
+
+```python
+from handy_bridge.epub import EpubError, ensure_book_markdown
+```
+
+```python
+    book = incoming.meta.get("book") or None
+    if book:
+        try:
+            ensure_book_markdown(cfg.vault_path, book)
+        except (EpubError, OSError) as exc:
+            # Best-effort: the book text is a convenience, never a reason to lose a note.
+            log.warning("could not convert book %r: %s", book, exc)
+```
+
+E trocar `book=incoming.meta.get("book") or None` por `book=book` na construção do `NoteData`.
+
+- [ ] **Step 6: Rodar a suíte inteira**
+
+Run: `cd bridge && uv run pytest -v`
+Expected: PASS — nenhum teste anterior quebra, porque as notas dos testes de pipeline não têm epub no `vault_path` e `ensure_book_markdown` devolve `None`.
+
+- [ ] **Step 7: Verificar com o Sapiens de verdade**
+
+```bash
+cd bridge && uv run python -c "
+from pathlib import Path
+from handy_bridge.epub import ensure_book_markdown
+vault = Path('C:/Users/kakam/OneDrive/Área de Trabalho/Reading')
+out = ensure_book_markdown(vault, 'epdf.pub_sapiens-uma-breve-historia-da-humanidade')
+print(out, out.stat().st_size if out else 0, 'bytes')
+"
+```
+
+Expected: gera `Reading/Books/epdf.pub_sapiens-uma-breve-historia-da-humanidade.md` com alguns MB de texto. Abrir no Obsidian e conferir que os capítulos estão na ordem certa e legíveis.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add bridge/src/handy_bridge/epub.py bridge/src/handy_bridge/pipeline.py bridge/tests/test_epub.py
+git commit -m "feat(bridge): convert epub to markdown for whole-book agent context"
+```
+
+---
+
 ## Definição de pronto
 
 O plano está completo quando:
@@ -2008,6 +2397,8 @@ O plano está completo quando:
 4. Desligar o pós-processamento continua produzindo nota
 5. Nenhum arquivo `.partial` sobra e o OneDrive não gera cópia de conflito
 6. A latência real está medida e registrada no README
+7. Uma nota com `book`/`word_offset`/`excerpt` nos metadados sai com o wikilink e o callout de trecho
+8. O Sapiens está convertido em `Reading/Books/*.md`, na ordem correta de capítulos
 
 O próximo plano (firmware) assume este serviço no ar e implementa o lado do device
 contra o contrato de `POST /v1/notes` fixado na Task 7.
