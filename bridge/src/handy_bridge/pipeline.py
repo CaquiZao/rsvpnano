@@ -10,6 +10,7 @@ from typing import Callable
 
 from handy_bridge import wav as wav_mod
 from handy_bridge.config import AsrConfig, Config
+from handy_bridge.epub import EpubError, ensure_book_markdown
 from handy_bridge.note import NoteData, write_note
 from handy_bridge.postprocess import PostProcessError, PostProcessor
 from handy_bridge.transcriber import Transcription
@@ -86,6 +87,14 @@ def process_note(
             # A post-processing failure must never cost a note.
             log.warning("post-processing failed for %s: %s", incoming.note_id, exc)
 
+    book = incoming.meta.get("book") or None
+    if book:
+        try:
+            ensure_book_markdown(cfg.vault_path, book)
+        except (EpubError, OSError) as exc:
+            # Best-effort: the book text is a convenience, never a reason to lose a note.
+            log.warning("could not convert book %r: %s", book, exc)
+
     word_offset = incoming.meta.get("word_offset")
     return write_note(
         cfg.inbox_path,
@@ -99,7 +108,7 @@ def process_note(
             duration_s=info.duration_s,
             asr_model=transcription.model,
             # Anchor fields arrive only when the device recorded from the reader.
-            book=incoming.meta.get("book") or None,
+            book=book,
             word_offset=int(word_offset) if word_offset is not None else None,
             excerpt=incoming.meta.get("excerpt") or None,
         ),
