@@ -94,6 +94,9 @@ class TelegramListener:
             return False
 
         sent_id = self._telegram.send(answer, reply_to=message.get("message_id"))
+        # Log the success too: without this, "never arrived" and "arrived and I
+        # missed it" look identical in the records.
+        log.info("answered a follow-up (%d chars) for chat %s", len(answer), chat_id)
 
         if note_path is not None:
             try:

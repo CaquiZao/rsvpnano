@@ -139,3 +139,10 @@ def test_a_missing_note_file_does_not_crash_the_listener(tmp_path):
     listener.poll_once()
     # A resposta ainda chega no Telegram, mesmo sem conseguir gravar na nota
     assert tg.sent
+
+
+def test_a_handled_message_is_logged(tmp_path, caplog):
+    listener, _, _, _, _ = build(tmp_path, [message("q", reply_to=100)])
+    with caplog.at_level("INFO", logger="handy_bridge.listener"):
+        listener.poll_once()
+    assert any("answered a follow-up" in r.message for r in caplog.records)
