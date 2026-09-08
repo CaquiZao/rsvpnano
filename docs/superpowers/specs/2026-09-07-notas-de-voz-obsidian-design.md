@@ -62,6 +62,31 @@ Este documento especifica o sub-projeto que fecha essa lacuna: **gravar uma nota
 | D9 | Transcrição crua sempre preservada | Contrapeso a D8: o LLM pode alucinar. O texto literal do Nemotron fica na mesma nota, num callout recolhido. |
 | D10 | Tudo novo em módulos próprios | O usuário quer continuar recebendo melhorias do upstream. Só `Es8311.{h,cpp}` e `Screens.h` são tocados, e de forma aditiva. |
 
+## 3.1 Ambiente de build (armadilhas verificadas)
+
+Descobertas ao preparar o ambiente em 2026-09-08. Cada uma custou tempo e nenhuma é
+óbvia:
+
+- **A placa é rev2.** Não pelo rótulo, mas por dedução: rev1 e rev2 trocam entre si os
+  pinos de backlight e de interrupção do touch (8 ↔ 42), então firmware rev1 numa placa
+  rev2 resultaria em tela apagada ou touch morto. O firmware rev2 grava e funciona,
+  logo é rev2. Env de build: `waveshare_esp32s3_touch_lcd_349_rev2`.
+- **Rodar `pio` sob Git Bash / MSYS não funciona.** O `idf_tools.py` da Espressif aborta
+  com `ERROR: MSys/Mingw is not supported`, e o efeito é traiçoeiro: o pacote
+  `toolchain-xtensa-esp-elf` fica instalado como um **stub de 6 KB**, o build parece
+  progredir e falha depois com `'xtensa-esp32s3-elf-g++' não é reconhecido`. A mensagem
+  final não tem relação com a causa. **Rode sempre pelo PowerShell ou cmd.**
+- **Os submódulos são obrigatórios.** `git clone` sem `--recurse-submodules` deixa
+  `lib/HarfBuzz`, `lib/PDFio`, `lib/SheenBidi` e `lib/zlib` vazios e o build falha.
+  Corrigir com `git submodule update --init --depth 1`.
+- **O toolchain instalado traz os dois esquemas de nome.** `main.py:102` monta
+  `toolchain_arch = "xtensa-%s" % mcu`, gerando `xtensa-esp32s3-elf-g++`, enquanto o
+  pacote se chama `toolchain-xtensa-esp-elf`. Não é incompatibilidade: o crosstool-NG da
+  Espressif instala `xtensa-esp-elf-g++` **e** os nomes por chip. Se o binário por chip
+  não existir, o problema é download incompleto, não versão errada.
+- **O env `native_test` exige um compilador de host** (`platform = native`). Sem g++,
+  clang ou MSVC no PATH, nenhum teste de lógica pura do firmware roda.
+
 ## 4. Arquitetura
 
 ```
