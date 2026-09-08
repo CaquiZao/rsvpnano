@@ -86,6 +86,41 @@ Descobertas ao preparar o ambiente em 2026-09-08. Cada uma custou tempo e nenhum
   não existir, o problema é download incompleto, não versão errada.
 - **O env `native_test` exige um compilador de host** (`platform = native`). Sem g++,
   clang ou MSVC no PATH, nenhum teste de lógica pura do firmware roda.
+- **`native_test` não builda no Windows sem trabalho extra.** `platformio.ini:471` fixa
+  `-lz`, e o mingw não traz a zlib do sistema — a CI do autor roda em Linux, onde ela
+  existe. A solução abaixo **não altera nenhum arquivo do repositório**, preservando o
+  rebase fácil (D10): compila a zlib do submódulo que o projeto já versiona e injeta o
+  caminho por variável de ambiente.
+
+  ```bash
+  # 1. Compilar a zlib vendorizada com o mingw (uma vez)
+  MINGW=<...>/mingw64/bin
+  ZSRC=lib/zlib/upstream
+  for f in adler32 compress crc32 deflate gzclose gzlib gzread gzwrite \
+           infback inffast inflate inftrees trees uncompr zutil; do
+    "$MINGW/gcc.exe" -O2 -c "$ZSRC/$f.c" -I"$ZSRC" -o "$f.o"
+  done
+  "$MINGW/ar.exe" rcs libz.a *.o
+  ```
+
+  ```powershell
+  # 2. Rodar os testes apontando para ela (PowerShell, nunca Git Bash)
+  $env:Path = "<mingw64\bin>;$env:Path"
+  $env:PLATFORMIO_BUILD_FLAGS = "-L<pasta com libz.a>"
+  pio test -e native_test
+  ```
+
+  Isso é um candidato natural a PR para o upstream, caso a estratégia de fork mude.
+
+### Baseline verificado em 2026-09-08
+
+| Verificação | Resultado |
+|---|---|
+| `pio run -e waveshare_esp32s3_touch_lcd_349_rev2` | SUCCESS em 15m40s, sem alterações |
+| `pio test -e native_test` | **196 casos, 196 passaram** (14 suítes) |
+| `cd bridge && uv run pytest` | 78 passaram |
+
+Qualquer regressão a partir daqui é do nosso código, não do ambiente.
 
 ## 4. Arquitetura
 
