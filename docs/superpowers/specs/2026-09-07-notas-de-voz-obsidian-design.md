@@ -23,13 +23,22 @@ Este documento especifica o sub-projeto que fecha essa lacuna: **gravar uma nota
 - Envio automático para um serviço no PC quando houver WiFi
 - Transcrição local via Handy + Nemotron Streaming 3.5
 - Geração de título, tags e versão limpa via CLI do `claude`
-- Escrita da nota em Markdown no vault `Reading`
-- Tela dedicada no device para gravar e acompanhar o estado da fila
+- Escrita da nota em Markdown no vault `Reading`, com âncora no livro
+- **Gatilho dentro do leitor** (duplo clique no BOOT), sem passar por menu
+- **Duração sem limite fixo**, com parada automática por bateria ou espaço
+- Relógio SNTP, para que a nota tenha hora real quando houver Wi-Fi
+- Feedback sonoro pelo alto-falante nas transições de estado
+- Harness de preview nativo, para iterar a UI 640×172 sem gravar firmware
+- Conversão do epub para markdown no vault, uma vez por livro
+- Tela Voz como **fila e histórico** — não é a porta de entrada da gravação
 
 **Fora (sub-projetos separados):**
 
+- Vocabulário com repetição espaçada — sub-projeto 3, reusa fila e bridge
+- Painel de estatísticas de leitura — sub-projeto 4, independente
 - Identidade visual própria (tema) — trivial, entra depois
 - Conversa por voz com IA — depende de tudo daqui funcionando primeiro
+- Bichinho virtual estilo Tamagotchi e jogos — escopo futuro
 - Reprodução das notas gravadas no próprio device
 - Companion apps (Android/iOS/Web) — não serão modificados
 
@@ -43,7 +52,12 @@ Este documento especifica o sub-projeto que fecha essa lacuna: **gravar uma nota
 | D4 | Fila no SD é a fonte da verdade | Grava-se offline (rua, ônibus) e envia-se depois. Nenhuma nota se perde se o PC estiver desligado. |
 | D5 | Device empurra para o PC (push) | Escolha do usuário. Sensação de "gravou, chegou", sem depender de o PC estar rodando um poller. |
 | D6 | Bridge descoberto por mDNS | O ESP32 consegue consultar mDNS. Elimina a configuração manual de IP que normalmente é o custo do modelo push. |
-| D7 | Tela Voz dedicada, sem combo de botões | A placa tem só 2 botões e ambos já estão ocupados; long-press do PWR desliga o aparelho. Um combo arriscaria desligar o device no meio de uma ideia. |
+| D7 | **Duplo clique no BOOT, de dentro do leitor** | Decisão revisada em 2026-09-08. A escolha original era uma tela Voz dedicada, porque os 2 botões já estão ocupados e long-press do PWR desliga o aparelho. Na prática isso criava atrito justamente onde a ideia nasce: para anotar era preciso sair do livro e navegar até um menu. O duplo clique é um botão físico, usável sem olhar, e não rouba função de nada. **Custo aceito:** o `PlayPause` do clique único passa a ser suprimido por ~250 ms até a janela de duplo clique fechar, o que adiciona latência perceptível em todo play/pause do leitor. |
+| D11 | Duração sem limite fixo | Anotação falada boa não caiba em 10 s. Em vez de um teto arbitrário, para automaticamente por bateria baixa ou espaço em disco. 1 h de áudio = 115 MB, o que um SD absorve sem drama. |
+| D12 | Âncora = wikilink + offset + **trecho do texto** | Só o offset é inútil: obrigaria a reproduzir a tokenização do firmware sobre um epub de 4,7 MB. O firmware já tem o texto na RAM no instante do clique, então embutir a frase custa quase nada e torna a nota autossuficiente — para você e para o Claudian. |
+| D13 | Bridge converte o epub para markdown | Uma vez por livro. Dá ao Claudian o livro inteiro como texto pesquisável, para perguntas que o trecho não alcança. |
+| D14 | Relógio SNTP | O upstream não tem relógio nenhum (zero ocorrências de `configTime`/`sntp`). Com SNTP a hora é real quando há Wi-Fi, e a reconstrução por `uptime_ms` fica só como fallback para gravação offline pós-reboot. |
+| D15 | Harness de preview nativo | Renderiza a UI 640×172 em PNG no PC. Pré-requisito prático para iterar tela Voz, tema e fonte sem gravar firmware a cada ajuste. Ideia tomada do fork RSVPbookworm — a ideia, não o código. |
 | D8 | Título/tags via `claude` CLI | O usuário já tem o CLI instalado (plugin Claudian no vault). Zero dependência nova, e qualidade em português muito superior a um modelo pequeno local. |
 | D9 | Transcrição crua sempre preservada | Contrapeso a D8: o LLM pode alucinar. O texto literal do Nemotron fica na mesma nota, num callout recolhido. |
 | D10 | Tudo novo em módulos próprios | O usuário quer continuar recebendo melhorias do upstream. Só `Es8311.{h,cpp}` e `Screens.h` são tocados, e de forma aditiva. |
@@ -152,14 +166,29 @@ Reusa o `HTTPClient` que `RssFeeds.cpp` e `OtaUpdater.cpp` já usam.
 
 ### 5.5 `VoiceScreen`
 
-Tela nova, registrada em `src/ui/screens/Screens.h`.
+Tela nova, registrada em `src/ui/screens/Screens.h`. **Não é a porta de entrada da
+gravação** — serve para revisar o que foi capturado.
 
-- `BOOT` — inicia/para a gravação
-- `PWR` — sai da tela
-- Exibe: tempo decorrido, indicador de nível de entrada, contagem de pendentes/enviadas
-- Estados visíveis: ocioso, gravando, salvando, enviando, enviado, falhou
+- Lista as notas: pendentes, enviadas, falhadas
+- Permite forçar o envio agora
+- Mostra o estado da última gravação e o espaço restante no cartão
 
-Limite de 10 minutos por gravação, com aviso visual a partir dos 9.
+O gatilho da gravação vive no leitor (D7), não aqui.
+
+#### Estados durante a gravação, sinalizados no leitor
+
+A gravação acontece **sobre a tela de leitura**, com um indicador discreto para não
+competir com o texto. Cada transição toca um som (D-sonoro):
+
+| Estado | Sinal visual | Som |
+|---|---|---|
+| Gravando | Ponto vermelho + tempo decorrido | Tom ascendente curto |
+| Parada e salva | Indicador some | Tom descendente curto |
+| Enviada | — | Confirmação de dois tons |
+| Falhou | Ícone de alerta na tela Voz | Tom grave |
+
+Sem limite fixo de duração (D11): para automaticamente com bateria abaixo de 15% ou
+menos de 200 MB livres no cartão, tocando o som de falha.
 
 ### 5.6 `CompanionVoiceApi.cpp`
 
@@ -239,23 +268,31 @@ Se o `claude` falhar ou estiver indisponível, a nota é escrita mesmo assim, co
 
 ## 7. Formato da nota
 
-Arquivo: `Inbox/2026-09-07 1432 — Ideia de fluxo de captura por voz.md`
+Arquivo: `Inbox/2026-09-07 1432 - Discordo da tese sobre agricultura.md`
 
 ```markdown
 ---
-title: Ideia de fluxo de captura por voz
+title: "Discordo da tese sobre agricultura"
 date: 2026-09-07T14:32:11
 duration: 47s
 source: rsvp-nano
 asr_model: nemotron-3.5-asr-streaming-0.6b
-tags: [ideia, projeto/rsvpnano]
+book: "[[epdf.pub_sapiens-uma-breve-historia-da-humanidade]]"
+word_offset: 12438
+tags: [ideia, leitura/sapiens]
 ---
 
 Texto limpo pelo LLM, sem hesitações e com pontuação.
 
+> [!quote] Trecho que eu estava lendo
+> ...a Revolução Agrícola foi a maior fraude da história...
+
 > [!note]- Transcrição original
 > Texto cru do Nemotron, palavra por palavra.
 ```
+
+`book`, `word_offset` e o callout de trecho aparecem apenas quando a gravação nasceu
+dentro do leitor. Uma nota solta (fora da leitura) omite os três.
 
 A escrita é **atômica** — arquivo temporário seguido de rename — porque o vault vive dentro do OneDrive e escrita parcial pode virar cópia de conflito.
 
@@ -278,6 +315,8 @@ Content-Type: multipart/form-data
 | Risco | Gravidade | Mitigação |
 |---|---|---|
 | ~~I2S full-duplex~~ — **resolvido na análise, não é mais risco** | — | `ESP_I2S.cpp:505-509` (arduino-esp32 3.3.9, versão fixada no `platformio.ini`) aloca `tx_chan` **e** `rx_chan` automaticamente quando `_dout >= 0 && _din >= 0`. O firmware está em TX-only só porque o `Context` nunca informa um pino de entrada. Basta passar `din = 6` em `setPins()`. Sem alternância de modo, sem risco para o `beep()`. |
+| **Contenção de SD durante a leitura.** Gravar de dentro do leitor faz o áudio escrever no mesmo cartão de onde o livro é lido, e o SD está em modo 1-bit (`kSdData1/2/3Pin = GPIO_NUM_NC`), o mais lento. A 32 KB/s contínuos, isso pode causar falhas na gravação. | Alta | Risco criado pela revisão de escopo de 2026-09-08 — não existia quando a gravação era numa tela separada com o livro descarregado. O buffer duplo em PSRAM absorve picos, mas **isto tem que ser medido antes de qualquer polimento de UI.** |
+| Latência de ~250 ms em todo play/pause | Média | Consequência direta de D7. Se incomodar na prática, o fallback é mover o gatilho para swipe vertical, que não exige supressão. |
 | Qualidade do microfone em ambiente real | Média | Ajuste empírico do ganho do PGA; medir com gravações reais antes de fixar |
 | Tempo de inferência do Nemotron desconhecido nesta máquina | Média | Medir com `--repeat` antes de prometer latência |
 | OneDrive gerando cópias de conflito | Baixa | Escrita atômica (temp + rename) |
@@ -301,6 +340,30 @@ Content-Type: multipart/form-data
 
 ## 12. Futuro
 
-**Sub-projeto 2 — identidade visual.** Um `themes/<nome>.toml` novo mais uma entrada em `themes/index.json`. Conflito zero com upstream.
+**Sub-projeto 2 — identidade visual.** O tema é trivial: 18 tokens de cor num
+`themes/<nome>.toml` novo mais uma entrada em `themes/index.json`, conflito zero com
+upstream. A **fonte não é trivial** — existe um formato próprio (`RFont4`) com
+compilador em `fonts/convert_alpha4_font.py`, que gera quatro strikes
+(large/medium/small/compact, padrão 52/43/33/14 px) a partir de um TTF. Três
+restrições: a fonte precisa de licença redistribuível (as atuais trazem `OFL.txt`), as
+escolhas atuais são todas otimizadas para legibilidade e não para estética — num
+regime de uma palavra por vez com âncora fixa, fonte bonita costuma ler pior — e
+métricas diferentes exigem override de tamanhos. Depende do harness de preview (D15)
+para ser iterável.
+
+**Sub-projeto 3 — vocabulário com repetição espaçada.** Marcar uma palavra desconhecida
+durante a leitura, que entra na mesma fila do SD e chega ao vault como flashcard. Reusa
+fila, uploader e bridge; muda o endpoint e o formato da nota.
+
+**Sub-projeto 4 — painel de estatísticas de leitura.** WPM ao longo do tempo, palavras
+por dia, sequência de dias. Independente: não precisa de áudio nem de rede. A faixa de
+640×172 é a forma natural de uma sparkline.
+
+**Escopo futuro, sem plano.** Bichinho virtual estilo Tamagotchi (o fork RSVPbookworm
+tem uma implementação completa cuja **ideia** vale, mas cujo código não serve: bifurcou
+da v0.0.1, usa `driver/i2s.h` obsoleto, e o HEAD não compila porque
+`TimeService::setManualTime` é chamado sem ser declarado). Jogos que caibam em 640×172 —
+os melhores encaixes na proporção 3,7:1 são runner lateral de um botão, bola em
+corredor por inclinação usando o QMI8658, e breakout ultralargo.
 
 **Sub-projeto 3 — conversa por voz.** Em vez de Gemini Live (que exigiria WebSocket, TLS e áudio bidirecional em tempo real no firmware, além da API key morando no device), a proposta é walkie-talkie: o device grava a pergunta, o bridge transcreve, o `claude` CLI responde **com o vault Reading como working directory**, e um TTS no PC devolve o áudio para o ES8311 tocar. Reusa toda a infraestrutura deste documento e entrega algo melhor — um agente que enxerga as próprias notas do usuário.
