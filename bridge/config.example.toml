@@ -27,3 +27,10 @@ subfolder = "Quadros"           # um quadro por livro, mais Geral.md para notas 
 enabled = false
 token   = ""
 chat_id = ""
+
+[digest]
+# Lembrete semanal do que continua em aberto nos quadros. Sem ele, a raia
+# Triagem acumula e voce para de confiar no quadro.
+enabled = true
+weekday = 6                     # 0 = segunda ... 6 = domingo
+hour    = 19

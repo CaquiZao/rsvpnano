@@ -170,6 +170,20 @@ não há entrega no celular.
 chega sozinha no celular é lida com menos ceticismo que uma que você foi buscar, e em
 qualquer coisa factual recente ou numérica o risco de erro é real.
 
+## Lembrete semanal
+
+Uma vez por semana o bridge manda no Telegram o que continua aberto nas raias
+**Triagem** e **A pesquisar** de todos os quadros. Cartões marcados e as raias
+*Pesquisando* e *Concluído* ficam de fora.
+
+Isso existe por um motivo específico: a raia Triagem recebe as pendências que o modelo
+**inferiu**, não as que você pediu explicitamente. Sem um empurrão periódico ela
+acumula, e um quadro que você não revisita é um quadro em que você deixa de confiar.
+
+Configurado em `[digest]` — dia da semana, hora, e um interruptor. Se a máquina estiver
+desligada na hora marcada, ele manda mais tarde no mesmo dia: lembrete atrasado ainda
+vale mais que lembrete nenhum.
+
 ## Livro como contexto
 
 Quando uma nota chega com `book`, o bridge converte o `.epub` correspondente do vault

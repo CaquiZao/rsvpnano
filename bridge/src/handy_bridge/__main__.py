@@ -10,6 +10,7 @@ from pathlib import Path
 import uvicorn
 
 from handy_bridge.config import ConfigError, load_config
+from handy_bridge.digest import DigestScheduler, DigestState
 from handy_bridge.discovery import advertise
 from handy_bridge.postprocess import build as build_processor
 from handy_bridge.server import create_app
@@ -40,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     telegram = None
     threads = None
     listener = None
+    digest = None
     if cfg.telegram.enabled:
         telegram = TelegramSender(cfg.telegram.token, cfg.telegram.chat_id)
         threads = ThreadStore(cfg.audio_store / "threads.json")
@@ -48,6 +50,11 @@ def main(argv: list[str] | None = None) -> int:
             listener = TelegramListener(telegram, processor, threads, cfg.telegram.chat_id)
             listener.start()
             logging.getLogger(__name__).info("Telegram follow-up listener started")
+        if cfg.digest.enabled:
+            digest = DigestScheduler(cfg, telegram, DigestState(cfg.audio_store / "digest.json"))
+            digest.start()
+            logging.getLogger(__name__).info(
+                "weekly digest scheduled for weekday %d at %02dh", cfg.digest.weekday, cfg.digest.hour)
 
     worker = NoteWorker(cfg, processor, telegram=telegram, threads=threads)
     worker.start()
@@ -64,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         uvicorn.run(app, host="0.0.0.0", port=cfg.port, log_config=None)
     finally:
+        if digest is not None:
+            digest.stop()
         if listener is not None:
             listener.stop()
         if zc is not None:

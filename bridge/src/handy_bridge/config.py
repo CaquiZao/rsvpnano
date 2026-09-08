@@ -35,6 +35,13 @@ class KanbanConfig:
 
 
 @dataclass(frozen=True)
+class DigestConfig:
+    enabled: bool = True
+    weekday: int = 6   # 0 = segunda ... 6 = domingo
+    hour: int = 19
+
+
+@dataclass(frozen=True)
 class TelegramConfig:
     enabled: bool = False
     token: str = ""
@@ -52,6 +59,7 @@ class Config:
     # Optional sections: an older config.toml without them keeps working.
     kanban: KanbanConfig = KanbanConfig()
     telegram: TelegramConfig = TelegramConfig()
+    digest: DigestConfig = DigestConfig()
 
     @property
     def inbox_path(self) -> Path:
@@ -102,6 +110,14 @@ def load_config(path: Path) -> Config:
     if telegram.enabled and not telegram.chat_id:
         raise ConfigError("[telegram] enabled but chat_id is empty")
 
+    digest_raw = raw.get("digest", {})
+    weekday = int(digest_raw.get("weekday", 6))
+    hour = int(digest_raw.get("hour", 19))
+    if not 0 <= weekday <= 6:
+        raise ConfigError(f"[digest] weekday must be 0-6, got {weekday}")
+    if not 0 <= hour <= 23:
+        raise ConfigError(f"[digest] hour must be 0-23, got {hour}")
+
     return Config(
         vault_path=vault_path,
         inbox_folder=_require(raw, "inbox_folder", "config"),
@@ -123,4 +139,9 @@ def load_config(path: Path) -> Config:
             subfolder=str(kanban_raw.get("subfolder", "Quadros")),
         ),
         telegram=telegram,
+        digest=DigestConfig(
+            enabled=bool(digest_raw.get("enabled", True)),
+            weekday=weekday,
+            hour=hour,
+        ),
     )
