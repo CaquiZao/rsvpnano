@@ -140,11 +140,19 @@ pesquisável, para perguntas que o trecho embutido na nota não alcança.
 
 ## Desempenho medido
 
-Nesta máquina (GeForce MX110, backend Vulkan):
+Nesta máquina (GeForce MX110, backend Vulkan), com uma nota real de **21 s** de fala
+em português:
 
 | Medida | Valor |
 |---|---|
-| ACK do `POST /v1/notes` | **0,28 s** |
+| ACK do `POST /v1/notes` | **0,26–0,28 s** |
+| Nota pronta no vault | **23,5 s** (modelo em cache) a **30,6 s** (primeira execução) |
 | Velocidade de transcrição | `rtf` 1,33 — processar leva ~0,75× a duração do áudio |
 | Carga do modelo | ~1,4 s por invocação |
 | `claude -p` com Haiku | ~5 s |
+
+O ACK é o número que importa para o firmware: o device recebe a confirmação em ~0,26 s
+e pode desligar a rádio imediatamente, sem esperar os ~25 s de inferência.
+
+Regra de bolso para estimar: **duração do áudio × 0,75 + ~7 s** de sobrecarga fixa
+(carga do modelo mais a chamada ao LLM).
