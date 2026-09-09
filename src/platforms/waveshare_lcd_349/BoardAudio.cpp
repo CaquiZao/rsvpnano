@@ -3,6 +3,7 @@
 #include <Wire.h>
 
 #include "board/BoardAudio.h"
+#include "drivers/audio/es7210/Es7210.h"
 #include "drivers/audio/es8311/Es8311.h"
 #include "platforms/waveshare_lcd_349/WaveshareLcd349.h"
 
@@ -20,6 +21,10 @@ namespace {
         WaveshareLcd349::AudioWiring::kDinPin,
     };
 
+    // The microphones on this board are wired to an ES7210 capture chip, not to the
+    // ES8311. The two share MCLK, BCLK and LRCK; only the data lines differ.
+    BoardDrivers::Es7210::Context gMicContext = {Wire1};
+
 } // namespace
 
 namespace Board::Audio {
@@ -36,12 +41,22 @@ namespace Board::Audio {
         return BoardPlatform::Es8311BoardAudio::available(gAudioContext);
     }
 
-    bool prepareInput(bool useDmic) {
-        return BoardPlatform::Es8311BoardAudio::prepareInput(gAudioContext, useDmic);
+    bool prepareInput(uint8_t micGain, uint8_t micPair) {
+        if (!BoardPlatform::Es8311BoardAudio::prepareInputBus(gAudioContext)) {
+            return false;
+        }
+        const auto pair =
+            micPair == 0 ? BoardDrivers::Es7210::MicPair::Mic12 : BoardDrivers::Es7210::MicPair::Mic34;
+        return BoardDrivers::Es7210::prepareInput(gMicContext, micGain, pair);
     }
 
     void dumpAudioRegisters() {
         BoardDrivers::Es8311::dumpRegisters(gAudioContext);
+        BoardDrivers::Es7210::dumpRegisters(gMicContext);
+    }
+
+    void scanI2cBus() {
+        BoardDrivers::Es7210::scanBus(Wire1);
     }
 
     size_t readSamples(int16_t* samples, size_t sampleCount, uint32_t timeoutMs) {
@@ -49,8 +64,7 @@ namespace Board::Audio {
     }
 
     bool inputAvailable() {
-        return WaveshareLcd349::AudioWiring::kDinPin >= 0
-            && BoardPlatform::Es8311BoardAudio::available(gAudioContext);
+        return WaveshareLcd349::AudioWiring::kDinPin >= 0 && BoardDrivers::Es7210::available(gMicContext);
     }
 
 } // namespace Board::Audio

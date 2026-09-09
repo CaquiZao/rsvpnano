@@ -191,6 +191,31 @@ diagnósticos cada vez mais elaborados sobre o chip errado.
 Antes de programar um periférico, confirme na documentação do fabricante **qual** chip o
 implementa.
 
+### O driver (escrito em 2026-09-09)
+
+`src/drivers/audio/es7210/Es7210.{h,cpp}` segue a sequência de inicialização do driver
+oficial do esp-adf (`components/audio_hal/driver/es7210/es7210.c`), não uma leitura livre
+do datasheet: reset `0xFF` → `0x41`, clocks desligados `0x3F`, ciclos de estado `0x30`,
+filtros HPF, **modo escravo** (bit 0 de `REG08` limpo), analógico `0x43`, bias de
+microfone `0x70` (2,87 V), e por fim MIC1+MIC2 ligados com ganho.
+
+Três escolhas que não são cópia:
+
+**Endereço por varredura, não por constante.** A Waveshare não documenta o strapping
+AD1/AD0 desta placa. O `begin()` sonda `0x40..0x43` e adota o primeiro que responde, e o
+autoteste ainda varre o barramento inteiro — o endereço vira medição, não suposição.
+
+**Coeficientes de 16 kHz fixos.** O ESP_I2S emite MCLK em 256·fs, então só uma linha da
+tabela de coeficientes importa: `REG02 = 0xC1`, `OSR = 0x20`, `LRCK_DIV = 0x0100`. A
+tabela inteira seria código morto.
+
+**O ES8311 fica com o ADC mutado.** Os dois codecs dividem MCLK/BCLK/LRCK; só as linhas
+de dados diferem. `Es8311::prepareInputBus()` sobe o I2S e **seta** o bit 6 de `REG0A`,
+garantindo que o ES8311 nunca dispute o pino de captura com o ES7210.
+
+O autoteste grava duas vezes, a 24 dB e a 33 dB, porque um ciclo de gravação custa caro:
+uma passada responde ao mesmo tempo "o microfone funciona?" e "o ganho está suficiente?".
+
 ## 4. Arquitetura
 
 ```

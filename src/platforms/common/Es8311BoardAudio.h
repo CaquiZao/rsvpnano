@@ -89,6 +89,17 @@ namespace BoardPlatform::Es8311BoardAudio {
         return writeBeepBuffer(context);
     }
 
+    // Only powers the rail and the shared I2S peripheral. Boards whose microphones
+    // hang off a separate capture chip configure that chip themselves.
+    bool prepareInputBus(BoardDrivers::Es8311::Context& context) {
+        if (!enableAudioRail()) {
+            ESP_LOGW(kAudioTag, "Audio rail unavailable");
+            return false;
+        }
+        delay(kAudioStartupDelayMs);
+        return BoardDrivers::Es8311::prepareInputBus(context);
+    }
+
     bool prepareInput(BoardDrivers::Es8311::Context& context, bool useDmic = false) {
         if (!enableAudioRail()) {
             ESP_LOGW(kAudioTag, "Audio rail unavailable");

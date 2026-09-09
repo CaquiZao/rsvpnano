@@ -236,6 +236,33 @@ namespace BoardDrivers::Es8311 {
         return true;
     }
 
+    bool prepareInputBus(Context& context) {
+        if (context.dataInPin < 0) {
+            ESP_LOGW(kTag, "No input pin wired for this board");
+            return false;
+        }
+        // begin() is idempotent, and ESP_I2S allocates the RX channel alongside TX as
+        // soon as both data pins are set, so capture and beep share one peripheral.
+        // I2C on this board drops the occasional transaction, so one retry: a codec
+        // that answered a moment ago is worth asking twice before giving up.
+        if (!begin(context) && !begin(context)) {
+            return false;
+        }
+
+        // On this board the capture data line comes from the ES7210, not from here.
+        // Keeping the ES8311 ADC serial output muted (bit 6 of SDPOUT_REG0A) stops the
+        // two codecs from ever driving the same pin. Best effort on purpose: startCodec()
+        // already leaves that bit set, so a dropped read here must not cost a recording.
+        uint8_t adcIface = 0;
+        if (readRegister(context, kSdPoutReg0A, adcIface)) {
+            adcIface |= static_cast<uint8_t>(1U << 6);
+            writeRegister(context, kSdPoutReg0A, adcIface);
+        } else {
+            ESP_LOGW(kTag, "Could not confirm ADC mute; carrying on with capture");
+        }
+        return context.i2sInitialized;
+    }
+
     bool prepareInput(Context& context, bool useDmic) {
         if (context.dataInPin < 0) {
             ESP_LOGW(kTag, "No input pin wired for this board");

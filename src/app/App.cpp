@@ -105,13 +105,22 @@ void App::begin() {
     // Throwaway scaffold from plan 2a: records ten seconds at boot so the I2S
     // full-duplex path, the microphone gain and the SD throughput can be judged from a
     // file you can actually listen to. Removed in plan 2b once the real trigger exists.
+    // Lists every chip answering on the audio I2C bus, so the ES7210 address is a
+    // measurement rather than a guess from the datasheet default.
+    Board::Audio::scanI2cBus();
+    // Sweeping the whole address space pokes every chip on the bus; let it settle
+    // before the codecs are configured for real.
+    delay(20);
     if (storage_.mounted()) {
-        // Analog and PDM paths recorded back to back: whichever carries signal
-        // settles what this board's microphone actually is, in one flash cycle.
-        for (const auto& probe : {std::pair{"/voice-analog.wav", false}, std::pair{"/voice-dmic.wav", true}}) {
-            const auto capture = voice::captureToFile(probe.first, 5000, probe.second);
-            ESP_LOGI("voice", "selftest %s dmic=%d ok=%d ms=%u error=%s", probe.first,
-                     probe.second ? 1 : 0, capture.ok ? 1 : 0,
+        // MIC1+MIC2 at 33 dB and at the codec maximum of 37.5 dB. Only these two inputs
+        // reach the two I2S slots without TDM, so the other pair cannot be probed this
+        // way. A beep marks the start of each window, because a probe nobody was talking
+        // into looks exactly like a dead microphone.
+        for (const auto& probe : {std::pair{"/voice-g33.wav", uint8_t{11}}, std::pair{"/voice-gmax.wav", uint8_t{14}}}) {
+            Board::Audio::beep();
+            const auto capture = voice::captureToFile(probe.first, 8000, probe.second, 0);
+            ESP_LOGI("voice", "selftest %s gain=%u ok=%d ms=%u error=%s", probe.first,
+                     static_cast<unsigned>(probe.second), capture.ok ? 1 : 0,
                      static_cast<unsigned>(capture.durationMs),
                      capture.error != nullptr ? capture.error : "none");
         }
