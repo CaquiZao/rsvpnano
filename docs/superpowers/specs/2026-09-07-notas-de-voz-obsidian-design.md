@@ -86,6 +86,11 @@ Descobertas ao preparar o ambiente em 2026-09-08. Cada uma custou tempo e nenhum
   não existir, o problema é download incompleto, não versão errada.
 - **O env `native_test` exige um compilador de host** (`platform = native`). Sem g++,
   clang ou MSVC no PATH, nenhum teste de lógica pura do firmware roda.
+- **O g++ desta máquina não está no PATH.** Ele veio pelo WinGet e vive em
+  `%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_*\mingw64in`
+  (MinGW-W64 16.1.0). Sem prefixar essa pasta no `PATH`, o `pio test -e native_test`
+  falha com `'g++' não é reconhecido` — mensagem que parece "não há compilador"
+  quando na verdade há. Use um wrapper que ajuste o `PATH` antes de chamar o `pio`.
 - **`native_test` não builda no Windows sem trabalho extra.** `platformio.ini:471` fixa
   `-lz`, e o mingw não traz a zlib do sistema — a CI do autor roda em Linux, onde ela
   existe. A solução abaixo **não altera nenhum arquivo do repositório**, preservando o
