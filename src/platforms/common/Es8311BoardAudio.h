@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 #include <array>
+#include <vector>
 #include <esp_log.h>
 #include "board/BoardPower.h"
 #include "drivers/audio/es8311/Es8311.h"
@@ -70,6 +71,43 @@ namespace BoardPlatform::Es8311BoardAudio {
 
         delay(kAudioStartupDelayMs);
         return BoardDrivers::Es8311::begin(context);
+    }
+
+    // Rendered into a heap buffer rather than the constexpr one, because the tones
+    // differ in pitch and length at runtime. 200 ms of stereo 16 kHz is 12.8 KB.
+    bool playTone(BoardDrivers::Es8311::Context& context, uint32_t frequencyHz, uint32_t durationMs) {
+        if (!enableAudioRail() || !BoardDrivers::Es8311::prepareOutput(context)) {
+            return false;
+        }
+        if (frequencyHz == 0 || durationMs == 0) {
+            return false;
+        }
+
+        const size_t frames = (static_cast<size_t>(kSampleRateHz) * durationMs) / 1000U;
+        const uint32_t halfPeriod = kSampleRateHz / (frequencyHz * 2U);
+        if (frames == 0 || halfPeriod == 0) {
+            return false;
+        }
+
+        std::vector<int16_t> buffer(frames * 2U);
+        const size_t attackFrames = (static_cast<size_t>(kSampleRateHz) * kEnvelopeAttackMs) / 1000U;
+        const size_t releaseFrames = (static_cast<size_t>(kSampleRateHz) * kEnvelopeReleaseMs) / 1000U;
+        for (size_t frame = 0; frame < frames; ++frame) {
+            int32_t sample = ((frame / halfPeriod) % 2U == 0U) ? kBeepAmplitude : -kBeepAmplitude;
+            // The same attack and release as the beep. Without them a tone clicks, and
+            // a click on every recording start would be worse than no feedback.
+            if (attackFrames > 0 && frame < attackFrames) {
+                sample = (sample * static_cast<int32_t>(frame)) / static_cast<int32_t>(attackFrames);
+            } else if (releaseFrames > 0 && frame + releaseFrames >= frames) {
+                const size_t remaining = frames - frame;
+                sample = (sample * static_cast<int32_t>(remaining)) / static_cast<int32_t>(releaseFrames);
+            }
+            buffer[frame * 2U] = static_cast<int16_t>(sample);
+            buffer[frame * 2U + 1U] = static_cast<int16_t>(sample);
+        }
+
+        return BoardDrivers::Es8311::writeSamples(context, buffer.data(), buffer.size(),
+                                                  kWriteTimeoutMs + durationMs);
     }
 
     bool beep(BoardDrivers::Es8311::Context& context) {

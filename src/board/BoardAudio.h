@@ -6,6 +6,9 @@ namespace Board::Audio {
 
     bool begin();
     bool beep();
+    // A single square-wave tone. The recording feedback needs more than one sound:
+    // when the board is in a pocket, the ear is the only channel there is.
+    bool playTone(uint32_t frequencyHz, uint32_t durationMs);
     bool available();
 
     // Capture is implemented only on boards wired for it. Declaring it here does not

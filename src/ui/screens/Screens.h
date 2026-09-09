@@ -51,6 +51,8 @@ namespace screens {
         Usb,
         Status,
         Standby,
+        VoiceRecord,
+        VoiceNotes,
     };
 
     enum class Action : uint8_t {
