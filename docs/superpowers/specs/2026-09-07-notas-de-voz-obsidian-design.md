@@ -140,6 +140,57 @@ Descobertas ao preparar o ambiente em 2026-09-08. Cada uma custou tempo e nenhum
 
 Qualquer regressão a partir daqui é do nosso código, não do ambiente.
 
+## 3.2 O microfone está noutro chip (descoberto em 2026-09-09)
+
+**A placa tem dois chips de áudio, e o firmware só conhece um.**
+
+Da documentação da Waveshare para a ESP32-S3-Touch-LCD-3.49:
+
+```
+ES8311 DAC audio chip                  -> saida (alto-falante)
+ES7210 ADC chip, supports multiple
+       microphone inputs               -> ENTRADA (microfones)
+Dual microphone array design
+```
+
+O upstream implementa apenas o ES8311, e apenas `beep()`. **Nada no projeto toca no
+ES7210**, que é onde os microfones realmente estão ligados.
+
+### Como isso se manifestou
+
+Três firmwares gravados e medidos no aparelho produziram **silêncio digital exato** —
+RMS 0,0 e pico 0 em centenas de milhares de amostras — enquanto:
+
+- o RX do I2S clocava normalmente e devolvia contagens corretas
+- todos os registradores do ES8311 liam de volta os valores escritos
+  (`REG 0A = 0C` desmutado, `REG 17 = BF` volume máximo, `REG 14 = 1A`)
+- o `beep()` funcionava, provando que o barramento e o codec estavam vivos
+
+Zero exato com registradores corretos não é ganho baixo nem mute: é **ausência de fonte**.
+O ES8311 estava perfeitamente configurado para amostrar uma entrada analógica que não
+tem microfone nenhum.
+
+O `kDinPin = 6`, declarado e nunca usado no upstream, é a saída de dados do **ES7210**
+chegando ao I2S do ESP32. A configuração de I2S sempre esteve certa; faltava programar
+o outro chip.
+
+### Consequência para o plano
+
+O plano 2a precisa de uma etapa nova antes de qualquer captura: **um driver para o
+ES7210**. O que já foi validado continua valendo — full-duplex do I2S, escrita no cartão
+sem contenção, desintercalação estéreo, e o `WavWriter` com seus testes.
+
+### A lição de processo
+
+Isto deveria ter sido verificado **na primeira hora**, antes de escrever qualquer código.
+O usuário afirmou que a placa tinha microfone; a premissa foi aceita e o trabalho seguiu
+direto para o codec que já estava no repositório, sem nunca perguntar *por onde o
+microfone entra*. Custou três ciclos de gravação, várias horas e uma sequência de
+diagnósticos cada vez mais elaborados sobre o chip errado.
+
+Antes de programar um periférico, confirme na documentação do fabricante **qual** chip o
+implementa.
+
 ## 4. Arquitetura
 
 ```
