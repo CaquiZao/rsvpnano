@@ -10,7 +10,8 @@ namespace Board::Audio {
 
     // Capture is implemented only on boards wired for it. Declaring it here does not
     // oblige the other platforms: nothing in their builds calls these.
-    bool prepareInput();
+    bool prepareInput(bool useDmic = false);
+    void dumpAudioRegisters();
     size_t readSamples(int16_t* samples, size_t sampleCount, uint32_t timeoutMs);
     bool inputAvailable();
 

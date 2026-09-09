@@ -28,10 +28,10 @@ namespace voice {
 
     } // namespace
 
-    CaptureResult captureToFile(const char* path, uint32_t maxDurationMs) {
+    CaptureResult captureToFile(const char* path, uint32_t maxDurationMs, bool useDmic) {
         CaptureResult result;
 
-        if (!Board::Audio::prepareInput()) {
+        if (!Board::Audio::prepareInput(useDmic)) {
             result.error = "microphone unavailable";
             return result;
         }

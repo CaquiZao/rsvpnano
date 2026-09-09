@@ -89,13 +89,13 @@ namespace BoardPlatform::Es8311BoardAudio {
         return writeBeepBuffer(context);
     }
 
-    bool prepareInput(BoardDrivers::Es8311::Context& context) {
+    bool prepareInput(BoardDrivers::Es8311::Context& context, bool useDmic = false) {
         if (!enableAudioRail()) {
             ESP_LOGW(kAudioTag, "Audio rail unavailable");
             return false;
         }
         delay(kAudioStartupDelayMs);
-        return BoardDrivers::Es8311::prepareInput(context);
+        return BoardDrivers::Es8311::prepareInput(context, useDmic);
     }
 
     size_t readSamples(BoardDrivers::Es8311::Context& context, int16_t* samples, size_t sampleCount,

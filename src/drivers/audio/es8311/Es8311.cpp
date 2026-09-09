@@ -236,7 +236,7 @@ namespace BoardDrivers::Es8311 {
         return true;
     }
 
-    bool prepareInput(Context& context) {
+    bool prepareInput(Context& context, bool useDmic) {
         if (context.dataInPin < 0) {
             ESP_LOGW(kTag, "No input pin wired for this board");
             return false;
@@ -246,10 +246,37 @@ namespace BoardDrivers::Es8311 {
         if (!begin(context)) {
             return false;
         }
-        // configureCodec() already routed and clocked the ADC; this only lifts the
-        // capture volume and applies the microphone PGA gain.
-        return writeRegister(context, kAdcReg17, kAdcVolumeMax)
-            && writeRegister(context, kSystemReg14, kMicPgaGain);
+
+        // startCodec() deliberately mutes the ADC serial output (bit 6 of SDPOUT_REG0A),
+        // matching Espressif's ES_MODULE_DAC path, because this firmware only ever
+        // played audio. Leaving it set makes the codec clock out exact zeros: the I2S
+        // read succeeds and every sample is silent. Clearing it is what turns capture on.
+        uint8_t adcIface = 0;
+        if (!readRegister(context, kSdPoutReg0A, adcIface)) {
+            return false;
+        }
+        adcIface &= static_cast<uint8_t>(~(1U << 6));
+
+        // Bit 6 of SYSTEM_REG14 chooses the digital microphone path. If the board
+        // carries a PDM mic, the analog ADC is correctly configured and correctly
+        // empty, which looks exactly like the silence we measured.
+        const uint8_t micConfig =
+            useDmic ? static_cast<uint8_t>(kMicPgaGain | 0x40U) : static_cast<uint8_t>(kMicPgaGain & ~0x40U);
+
+        return writeRegister(context, kSdPoutReg0A, adcIface)
+            && writeRegister(context, kAdcReg17, kAdcVolumeMax)
+            && writeRegister(context, kSystemReg14, micConfig);
+    }
+
+    void dumpRegisters(Context& context) {
+        for (uint8_t reg = 0; reg < 0x4A; ++reg) {
+            uint8_t value = 0;
+            if (readRegister(context, reg, value)) {
+                ESP_LOGI(kTag, "REG %02X = %02X", reg, value);
+            } else {
+                ESP_LOGW(kTag, "REG %02X = <read failed>", reg);
+            }
+        }
     }
 
     size_t readSamples(Context& context, int16_t* samples, size_t sampleCount, uint32_t timeoutMs) {
@@ -257,12 +284,26 @@ namespace BoardDrivers::Es8311 {
             return 0;
         }
         context.i2s.setTimeout(timeoutMs);
+        // The peripheral runs in stereo slot mode — the beep buffer already relies on
+        // that, writing two samples per frame. The ES8311 is a mono codec, so both
+        // slots carry the same signal and the second one is dropped here. Without this,
+        // the frame count doubles and a 10 s recording reports 18 s of audio.
+        //
+        // sampleCount is the buffer's capacity in int16, never a mono frame count:
+        // reading sampleCount*2 into a buffer of sampleCount would overrun it. The
+        // interleaved data fills the buffer and is compacted into its first half, so a
+        // call yields at most sampleCount/2 mono frames.
         const size_t wanted = sampleCount * sizeof(int16_t);
         const size_t read = context.i2s.readBytes(reinterpret_cast<char*>(samples), wanted);
         if (read == 0) {
             ESP_LOGW(kTag, "Sample read failed: %d", context.i2s.lastError());
+            return 0;
         }
-        return read / sizeof(int16_t);
+        const size_t frames = (read / sizeof(int16_t)) / 2U;
+        for (size_t frame = 1; frame < frames; ++frame) {
+            samples[frame] = samples[frame * 2U];
+        }
+        return frames;
     }
 
     bool available(const Context& context) {

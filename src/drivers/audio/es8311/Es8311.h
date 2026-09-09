@@ -39,7 +39,10 @@ namespace BoardDrivers::Es8311 {
     bool prepareOutput(Context& context);
     bool recoverOutputPath(Context& context);
     bool writeSamples(Context& context, const int16_t* samples, size_t sampleCount, uint32_t timeoutMs);
-    bool prepareInput(Context& context);
+    // useDmic picks the digital microphone path (bit 6 of SYSTEM_REG14).
+    bool prepareInput(Context& context, bool useDmic = false);
+    // Debug aid mirroring es8311_read_all() from Espressif's driver.
+    void dumpRegisters(Context& context);
     size_t readSamples(Context& context, int16_t* samples, size_t sampleCount, uint32_t timeoutMs);
     bool available(const Context& context);
 

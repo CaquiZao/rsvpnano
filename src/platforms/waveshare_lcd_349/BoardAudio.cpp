@@ -36,8 +36,12 @@ namespace Board::Audio {
         return BoardPlatform::Es8311BoardAudio::available(gAudioContext);
     }
 
-    bool prepareInput() {
-        return BoardPlatform::Es8311BoardAudio::prepareInput(gAudioContext);
+    bool prepareInput(bool useDmic) {
+        return BoardPlatform::Es8311BoardAudio::prepareInput(gAudioContext, useDmic);
+    }
+
+    void dumpAudioRegisters() {
+        BoardDrivers::Es8311::dumpRegisters(gAudioContext);
     }
 
     size_t readSamples(int16_t* samples, size_t sampleCount, uint32_t timeoutMs) {

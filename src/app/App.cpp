@@ -1,5 +1,7 @@
 #include "app/App.h"
 
+#include <utility>
+
 #if defined(RSVP_VOICE_SELFTEST) && RSVP_VOICE_SELFTEST
 #include "voice/VoiceCapture.h"
 #endif
@@ -104,11 +106,17 @@ void App::begin() {
     // full-duplex path, the microphone gain and the SD throughput can be judged from a
     // file you can actually listen to. Removed in plan 2b once the real trigger exists.
     if (storage_.mounted()) {
-        const auto capture = voice::captureToFile("/voice-selftest.wav", 10000);
-        ESP_LOGI("voice", "selftest ok=%d ms=%u frames=%u error=%s", capture.ok ? 1 : 0,
-                 static_cast<unsigned>(capture.durationMs),
-                 static_cast<unsigned>(capture.framesWritten),
-                 capture.error != nullptr ? capture.error : "none");
+        // Analog and PDM paths recorded back to back: whichever carries signal
+        // settles what this board's microphone actually is, in one flash cycle.
+        for (const auto& probe : {std::pair{"/voice-analog.wav", false}, std::pair{"/voice-dmic.wav", true}}) {
+            const auto capture = voice::captureToFile(probe.first, 5000, probe.second);
+            ESP_LOGI("voice", "selftest %s dmic=%d ok=%d ms=%u error=%s", probe.first,
+                     probe.second ? 1 : 0, capture.ok ? 1 : 0,
+                     static_cast<unsigned>(capture.durationMs),
+                     capture.error != nullptr ? capture.error : "none");
+        }
+        // Read the codec back instead of assuming the writes landed.
+        Board::Audio::dumpAudioRegisters();
         // Proves playback still works after capturing on the same I2S peripheral.
         ESP_LOGI("voice", "selftest beep=%d", Board::Audio::beep() ? 1 : 0);
     } else {

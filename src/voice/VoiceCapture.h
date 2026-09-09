@@ -13,6 +13,6 @@ namespace voice {
 
     // Records from the board microphone straight into a WAV on the SD card.
     // Blocking: intended for a dedicated task, never for the UI loop.
-    CaptureResult captureToFile(const char* path, uint32_t maxDurationMs);
+    CaptureResult captureToFile(const char* path, uint32_t maxDurationMs, bool useDmic = false);
 
 } // namespace voice
