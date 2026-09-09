@@ -5,6 +5,8 @@
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 
+#include <algorithm>
+
 #include "board/BoardAudio.h"
 #include "board/BoardStorage.h"
 #include "voice/WavWriter.h"
@@ -14,9 +16,14 @@ namespace voice {
     namespace {
 
         constexpr char kTag[] = "voice";
-        // 16 kHz mono 16-bit is 32 KB/s, so this block holds roughly half a second of
-        // audio: enough slack for an SD write to finish while the next block fills.
-        constexpr size_t kBlockSamples = 8192;
+        // 4096 int16 read from a stereo stream is 2048 mono frames, or 128 ms, and
+        // exactly fills BufferedWriter's 4096-byte buffer. Aligned writes matter more
+        // than they look: at 1600 samples every flush straddled a sector boundary and
+        // the card paid for a read-modify-write each time, which is what starved the
+        // UI. 128 ms still moves the level meter eight times a second.
+        constexpr size_t kBlockSamples = 4096;
+        // 128 ms of audio split eight ways is a level every 16 ms.
+        constexpr size_t kLevelSlices = 8;
         // Speech peaks well below full scale, so measuring the meter against a lower
         // reference keeps it lively instead of pinned near the floor. -30 dBFS.
         constexpr uint32_t kLevelReferenceRms = 1036;
@@ -84,7 +91,10 @@ namespace voice {
         const char* failure = nullptr;
         bool stoppedByCaller = false;
 
+        uint32_t slowestBlockMs = 0;
+        uint32_t blocks = 0;
         while ((millis() - startedAt) < limitMs) {
+            const uint32_t blockStartedAt = millis();
             const size_t read = Board::Audio::readSamples(block, kBlockSamples, 1000);
             if (read == 0) {
                 failure = "microphone read returned nothing";
@@ -95,12 +105,29 @@ namespace voice {
                 break;
             }
             if (callbacks != nullptr && callbacks->onBlock) {
-                if (!callbacks->onBlock(millis() - startedAt, blockLevel(block, read))) {
+                // One level per 16 ms slice rather than one per block. The card wants
+                // big aligned writes and the eye wants frequent movement; measuring
+                // the slices separately gives both, at the cost of a few divisions.
+                const size_t slice = read / kLevelSlices;
+                bool keepGoing = true;
+                for (size_t index = 0; index < kLevelSlices && slice > 0; ++index) {
+                    keepGoing = callbacks->onBlock(millis() - startedAt, blockLevel(block + index * slice, slice));
+                    if (!keepGoing) {
+                        break;
+                    }
+                }
+                if (!keepGoing) {
                     stoppedByCaller = true;
                     break;
                 }
             }
+            // Cheap running cost report. A slow card and a starved UI look identical
+            // from the outside, and guessing between them has already cost cycles.
+            slowestBlockMs = std::max(slowestBlockMs, millis() - blockStartedAt);
+            ++blocks;
         }
+        ESP_LOGI(kTag, "capture blocks=%u slowest=%u ms", static_cast<unsigned>(blocks),
+                 static_cast<unsigned>(slowestBlockMs));
 
         // finish() runs even after a failure: a partial recording with a correct header
         // is far more useful than a file the bridge has to repair.

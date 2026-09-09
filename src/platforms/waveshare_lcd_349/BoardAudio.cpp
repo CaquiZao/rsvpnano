@@ -37,8 +37,9 @@ namespace Board::Audio {
         return BoardPlatform::Es8311BoardAudio::beep(gAudioContext);
     }
 
-    bool playTone(uint32_t frequencyHz, uint32_t durationMs) {
-        return BoardPlatform::Es8311BoardAudio::playTone(gAudioContext, frequencyHz, durationMs);
+    bool playTone(uint32_t frequencyHz, uint32_t durationMs, int16_t amplitude, uint8_t dacVolume) {
+        return BoardPlatform::Es8311BoardAudio::playTone(gAudioContext, frequencyHz, durationMs,
+                                                         amplitude, dacVolume);
     }
 
     bool available() {

@@ -37,6 +37,10 @@ namespace BoardDrivers::Es8311 {
 
     bool begin(Context& context);
     bool prepareOutput(Context& context);
+    // Register 0x32 in 0.5 dB steps: 0xBF is 0 dB and 0xFF is about +32 dB, so the
+    // default is not "full scale" but heavy digital gain. Anything that wants to be
+    // quiet has to come down here; scaling the samples alone cannot win against it.
+    bool setOutputVolume(Context& context, uint8_t volume);
     bool recoverOutputPath(Context& context);
     bool writeSamples(Context& context, const int16_t* samples, size_t sampleCount, uint32_t timeoutMs);
     // Brings up the shared I2S peripheral for capture without enabling this codec's own

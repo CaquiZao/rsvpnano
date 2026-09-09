@@ -185,6 +185,23 @@ namespace BoardDrivers::Es8311 {
         return true;
     }
 
+    bool setOutputVolume(Context& context, uint8_t volume) {
+        if (!context.available) {
+            return false;
+        }
+        if (!writeRegister(context, kDacReg32, volume)) {
+            return false;
+        }
+        uint8_t readback = 0;
+        if (readRegister(context, kDacReg32, readback) && readback != volume) {
+            // Two loud beeps have already been blamed on the wrong cause here. If the
+            // codec is not taking the value, say so instead of assuming it did.
+            ESP_LOGW(kTag, "DAC volume did not take: wrote %02X, read %02X", volume, readback);
+            return false;
+        }
+        return true;
+    }
+
     bool prepareOutput(Context& context) {
         if (!context.available || !context.i2sInitialized) {
             return false;

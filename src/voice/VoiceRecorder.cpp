@@ -14,9 +14,12 @@ namespace voice {
 
         constexpr char kTag[] = "voice";
         constexpr uint32_t kStackWords = 8192;
-        // Above the upload task, below the UI: a dropped audio block is lost forever,
-        // whereas a dropped frame is redrawn next tick.
-        constexpr UBaseType_t kPriority = 2;
+        // The same priority as the Arduino loop task, deliberately. At priority 2 this
+        // task preempted the UI outright and the recording screen fell to about one
+        // frame a second: it woke on every I2S block and wrote to the card while the
+        // UI waited. Round-robin at the same priority lets both run, and the I2S DMA
+        // ring absorbs the time the UI spends drawing.
+        constexpr UBaseType_t kPriority = 1;
 
     } // namespace
 

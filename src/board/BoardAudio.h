@@ -6,9 +6,10 @@ namespace Board::Audio {
 
     bool begin();
     bool beep();
-    // A single square-wave tone. The recording feedback needs more than one sound:
-    // when the board is in a pocket, the ear is the only channel there is.
-    bool playTone(uint32_t frequencyHz, uint32_t durationMs);
+    // A single square-wave tone. amplitude is the peak sample value out of 32767;
+    // the recording cues are deliberately faint because they fire in a classroom.
+    bool playTone(uint32_t frequencyHz, uint32_t durationMs, int16_t amplitude = 12000,
+                  uint8_t dacVolume = 0xFF);
     bool available();
 
     // Capture is implemented only on boards wired for it. Declaring it here does not

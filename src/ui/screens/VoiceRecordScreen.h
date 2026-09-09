@@ -23,6 +23,9 @@ namespace screens {
     // an hour-long note reads as "61:02" rather than wrapping.
     std::string formatElapsed(uint32_t elapsedMs);
 
+    // The trace scrolls: every bar shifts left on each new level. Measured frame time
+    // on this panel is about 0.03 ms, so there is no reason to be clever about it -- and
+    // the clever version, repainting only the bar that changed, looked frozen.
     class VoiceRecordScreen {
     public:
         void reset();
@@ -30,9 +33,18 @@ namespace screens {
 
     private:
         static constexpr size_t kBars = 48;
+
         std::array<uint8_t, kBars> history_{};
         size_t head_ = 0;
         uint32_t lastPushMs_ = 0;
+        bool layoutValid_ = false;
+        bool dirty_ = true;
+        int16_t waveTop_ = 0;
+        int16_t waveHeight_ = 0;
+        uint32_t frames_ = 0;
+        uint32_t slowestFrameMs_ = 0;
+        uint32_t lastReportMs_ = 0;
+        uint32_t lastFrameMs_ = 0;
     };
 
 } // namespace screens

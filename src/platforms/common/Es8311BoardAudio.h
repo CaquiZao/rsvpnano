@@ -19,6 +19,8 @@ namespace {
     constexpr uint32_t kSampleRateHz = 16000;
     constexpr uint32_t kBeepDurationMs = 120;
     constexpr uint32_t kWriteTimeoutMs = 250;
+    // What startCodec() leaves in register 0x32.
+    constexpr uint8_t kDacFullVolume = 0xFF;
     constexpr size_t kBeepFrames = (static_cast<size_t>(kSampleRateHz) * kBeepDurationMs) / 1000U;
     constexpr size_t kBeepSamples = kBeepFrames * 2U;
 
@@ -75,7 +77,8 @@ namespace BoardPlatform::Es8311BoardAudio {
 
     // Rendered into a heap buffer rather than the constexpr one, because the tones
     // differ in pitch and length at runtime. 200 ms of stereo 16 kHz is 12.8 KB.
-    bool playTone(BoardDrivers::Es8311::Context& context, uint32_t frequencyHz, uint32_t durationMs) {
+    bool playTone(BoardDrivers::Es8311::Context& context, uint32_t frequencyHz, uint32_t durationMs,
+                  int16_t amplitude = kBeepAmplitude, uint8_t volume = kDacFullVolume) {
         if (!enableAudioRail() || !BoardDrivers::Es8311::prepareOutput(context)) {
             return false;
         }
@@ -93,7 +96,7 @@ namespace BoardPlatform::Es8311BoardAudio {
         const size_t attackFrames = (static_cast<size_t>(kSampleRateHz) * kEnvelopeAttackMs) / 1000U;
         const size_t releaseFrames = (static_cast<size_t>(kSampleRateHz) * kEnvelopeReleaseMs) / 1000U;
         for (size_t frame = 0; frame < frames; ++frame) {
-            int32_t sample = ((frame / halfPeriod) % 2U == 0U) ? kBeepAmplitude : -kBeepAmplitude;
+            int32_t sample = ((frame / halfPeriod) % 2U == 0U) ? amplitude : -amplitude;
             // The same attack and release as the beep. Without them a tone clicks, and
             // a click on every recording start would be worse than no feedback.
             if (attackFrames > 0 && frame < attackFrames) {
@@ -106,8 +109,13 @@ namespace BoardPlatform::Es8311BoardAudio {
             buffer[frame * 2U + 1U] = static_cast<int16_t>(sample);
         }
 
-        return BoardDrivers::Es8311::writeSamples(context, buffer.data(), buffer.size(),
-                                                  kWriteTimeoutMs + durationMs);
+        // Bring the DAC down for the tone and put it back afterwards, so the focus
+        // timer beep keeps the loudness it always had.
+        BoardDrivers::Es8311::setOutputVolume(context, volume);
+        const bool written = BoardDrivers::Es8311::writeSamples(context, buffer.data(), buffer.size(),
+                                                                kWriteTimeoutMs + durationMs);
+        BoardDrivers::Es8311::setOutputVolume(context, kDacFullVolume);
+        return written;
     }
 
     bool beep(BoardDrivers::Es8311::Context& context) {
