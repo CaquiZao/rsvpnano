@@ -216,6 +216,43 @@ garantindo que o ES8311 nunca dispute o pino de captura com o ES7210.
 O autoteste grava duas vezes, a 24 dB e a 33 dB, porque um ciclo de gravação custa caro:
 uma passada responde ao mesmo tempo "o microfone funciona?" e "o ganho está suficiente?".
 
+### O que fez o microfone finalmente falar
+
+O driver escrito a partir do esp-adf **subiu inteiro e continuou surdo**: todos os
+registradores liam de volta os valores escritos, o ganho respondia (24 dB → −75 dBFS,
+33 dB → −65 dBFS, exatamente os 9 dB de diferença), e mesmo assim o envelope ficava
+travado dentro de 2 dB por cinco segundos. Fala humana oscila 20 dB ou mais. O ADC
+estava amplificando a própria entrada, sem microfone nela.
+
+A diferença estava no fim da sequência. O `esp_codec_dev` — driver atual da Espressif —
+termina o `start` com três escritas que o esp-adf não tem:
+
+```
+ANALOG_REG40 = 0x43     (reafirma o bloco analógico depois da seleção de microfone)
+RESET_REG00  = 0x71
+RESET_REG00  = 0x41     (solta o ADC)
+```
+
+Sem elas o front-end analógico sobe vivo mas ~40 dB abaixo. Com elas, fala real em
+português transcreveu corretamente no primeiro teste.
+
+**Lição:** copiar o driver de referência não basta se houver mais de um. O esp-adf está
+congelado; o `esp_codec_dev` recebeu correções. Quando o comportamento não bate com o
+código de referência, procure a versão mais nova antes de suspeitar do hardware.
+
+### Ganho, medido
+
+A 37,5 dB (passo 14, máximo do chip) a fala chega a −7,8 dBFS RMS com **5,5% das
+amostras clipadas** — quente demais. Extrapolando, **24 dB (passo 8) cai em torno de
+−21 dBFS**, com folga de pico. É o padrão do driver e continua sendo.
+
+### MIC3+MIC4 não é opção
+
+Só ADC1 e ADC2 alcançam os dois slots do I2S estéreo comum. Selecionar o par MIC3+MIC4
+sem migrar codec e periférico para TDM produz **silêncio exato** — medido, não deduzido.
+O `enum MicPair` existe para a escolha ficar explícita, não porque as duas opções
+funcionem hoje.
+
 ## 4. Arquitetura
 
 ```
