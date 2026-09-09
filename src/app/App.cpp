@@ -2,9 +2,6 @@
 
 #include <utility>
 
-#if defined(RSVP_VOICE_SELFTEST) && RSVP_VOICE_SELFTEST
-#include "voice/VoiceCapture.h"
-#endif
 #include <esp_log.h>
 
 #include <array>
@@ -25,6 +22,9 @@
 #include "library/ReadingProgress.h"
 #include "storage/migration/Migration.h"
 #include "update/OtaUpdater.h"
+#include "voice/BookAnchor.h"
+#include "voice/Tones.h"
+#include "voice/VoiceQueue.h"
 
 namespace {
 
@@ -101,37 +101,10 @@ void App::begin() {
     libraryScreen_.invalidate();
     ESP_LOGI("startup", "ready");
 
-#if defined(RSVP_VOICE_SELFTEST) && RSVP_VOICE_SELFTEST
-    // Throwaway scaffold from plan 2a: records ten seconds at boot so the I2S
-    // full-duplex path, the microphone gain and the SD throughput can be judged from a
-    // file you can actually listen to. Removed in plan 2b once the real trigger exists.
-    // Lists every chip answering on the audio I2C bus, so the ES7210 address is a
-    // measurement rather than a guess from the datasheet default.
-    Board::Audio::scanI2cBus();
-    // Sweeping the whole address space pokes every chip on the bus; let it settle
-    // before the codecs are configured for real.
-    delay(20);
-    if (storage_.mounted()) {
-        // MIC1+MIC2 at 33 dB and at the codec maximum of 37.5 dB. Only these two inputs
-        // reach the two I2S slots without TDM, so the other pair cannot be probed this
-        // way. A beep marks the start of each window, because a probe nobody was talking
-        // into looks exactly like a dead microphone.
-        for (const auto& probe : {std::pair{"/voice-g33.wav", uint8_t{11}}, std::pair{"/voice-gmax.wav", uint8_t{14}}}) {
-            Board::Audio::beep();
-            const auto capture = voice::captureToFile(probe.first, 8000, probe.second, 0);
-            ESP_LOGI("voice", "selftest %s gain=%u ok=%d ms=%u error=%s", probe.first,
-                     static_cast<unsigned>(probe.second), capture.ok ? 1 : 0,
-                     static_cast<unsigned>(capture.durationMs),
-                     capture.error != nullptr ? capture.error : "none");
-        }
-        // Read the codec back instead of assuming the writes landed.
-        Board::Audio::dumpAudioRegisters();
-        // Proves playback still works after capturing on the same I2S peripheral.
-        ESP_LOGI("voice", "selftest beep=%d", Board::Audio::beep() ? 1 : 0);
-    } else {
-        ESP_LOGW("voice", "selftest skipped: no SD card mounted");
-    }
-#endif
+    // Voice notes: the queue is drained in the background, so a note recorded with
+    // the network down still lands in the vault later.
+    voiceService_.setCredentials({settingsStore_.settings().network.ssid, settingsStore_.secrets().wifiPassword});
+    voiceService_.begin();
 }
 
 void App::update(uint32_t nowMs) {
@@ -146,6 +119,13 @@ void App::update(uint32_t nowMs) {
         lastActivityMs_ = nowMs;
         handleTouch(nowMs);
         nowMs = millis();
+    }
+
+    updateVoice(nowMs);
+    if (screen_ == screens::Screen::VoiceRecord) {
+        // The recording screen owns the frame while it is up: no reading loop, no
+        // background job, nothing that could seize the SD card mid-capture.
+        return;
     }
 
     updateBackgroundJob();
@@ -244,6 +224,22 @@ void App::renderScreen(uint32_t nowMs) {
     case screens::Screen::Standby:
         standbyScreen_.draw(immediateUi_);
         return;
+    case screens::Screen::VoiceNotes: {
+        immediateUi_.beginFrame(static_cast<uint8_t>(screen_));
+        const screens::Action result = voiceNotesScreen_.draw(immediateUi_, voiceNotesModel(), nowMs, screen_);
+        immediateUi_.endFrame();
+        handleScreenAction(result, nowMs);
+        return;
+    }
+    case screens::Screen::VoiceRecord: {
+        screens::VoiceRecordModel model;
+        model.elapsedMs = voiceRecorder_.elapsedMs();
+        model.level = voiceRecorder_.level();
+        model.armed = voiceRecorder_.active();
+        model.error = voiceRecorder_.error();
+        voiceRecordScreen_.draw(immediateUi_, model, nowMs);
+        return;
+    }
     case screens::Screen::Read:
         immediateUi_.beginFrame(static_cast<uint8_t>(screen_));
         {
@@ -406,6 +402,17 @@ void App::handleScreenAction(screens::Action action, uint32_t nowMs) {
     case screens::Action::UsbTransfer:
         enterUsbTransfer(nowMs);
         return;
+    case screens::Action::VoiceNotes:
+        screen_ = screens::Screen::VoiceNotes;
+        immediateUi_.invalidate();
+        renderScreen(nowMs);
+        return;
+    case screens::Action::VoiceFlush:
+        voiceService_.setCredentials(
+            {settingsStore_.settings().network.ssid, settingsStore_.secrets().wifiPassword});
+        voiceService_.requestFlush();
+        renderScreen(nowMs);
+        return;
     case screens::Action::StorageStatus:
         screen_ = screens::Screen::Status;
         statusUntilMs_ = 0;
@@ -537,10 +544,114 @@ void App::handleInput(Input::ActionMask actions, uint32_t nowMs) {
         return;
     }
     if (Input::hasAction(actions, Input::ActionSelect) || Input::hasAction(actions, Input::ActionPlayPause)) {
+        if (screen_ == screens::Screen::VoiceRecord) {
+            // Second double click ends the recording. A single press does nothing here
+            // on purpose: an accidental tap must not stop a note mid-sentence.
+            if (voiceClick_.onPress(nowMs) == voice::DoubleClick::Verdict::Double) {
+                voiceRecorder_.requestStop();
+            }
+            return;
+        }
         if (screen_ == screens::Screen::Reader && !typographyJobActive()) {
-            readerScreen_.toggle(prefs_, nowMs);
+            handleReaderPlayPause(nowMs);
         }
     }
+}
+
+// The only place where an upstream behaviour changes. Play/pause is now decided by
+// the double-click detector, which costs it 260 ms; in exchange a recording starts
+// without leaving the page, which was the whole point of the feature.
+void App::handleReaderPlayPause(uint32_t nowMs) {
+    if (voiceClick_.onPress(nowMs) == voice::DoubleClick::Verdict::Double) {
+        startVoiceNote(nowMs);
+    }
+}
+
+// Runs every frame. Two jobs: let a pending single click expire into a play/pause,
+// and notice when the recording task has finished.
+void App::updateVoice(uint32_t nowMs) {
+    if (screen_ == screens::Screen::Reader && !typographyJobActive()
+        && voiceClick_.tick(nowMs) == voice::DoubleClick::Verdict::Single) {
+        readerScreen_.toggle(prefs_, nowMs);
+    }
+    if (screen_ == screens::Screen::VoiceRecord) {
+        voiceClick_.tick(nowMs); // Drain, so a stray press cannot fire later.
+        if (voiceRecorder_.takeFinished()) {
+            finishVoiceNote(nowMs);
+            return;
+        }
+        renderScreen(nowMs);
+    }
+}
+
+bool App::startVoiceNote(uint32_t nowMs) {
+    // Pause first. The reading loop advancing words during a recording would leave the
+    // anchor pointing somewhere the user never spoke about.
+    ReadingProgress::save(readerScreen_.session, prefs_, true, nowMs);
+    ReadingLoop::pause(readerScreen_.session);
+
+    voice::NoteMeta anchor;
+    const auto& session = readerScreen_.session;
+    if (session.stored()) {
+        anchor.book = voice::bookSlug(session.sourcePath());
+        anchor.wordOffset = session.state.wordIndex;
+        anchor.excerpt = voice::clampExcerpt(ReadingLoop::paragraphAt(session, session.state.wordIndex).text);
+    }
+
+    if (!voiceRecorder_.start(anchor)) {
+        voice::play(voice::Tone::Error);
+        showTransientStatus("Nota de voz", "Nao foi possivel gravar",
+                            voiceRecorder_.error() != nullptr ? voiceRecorder_.error() : "", 1400,
+                            screens::Screen::Reader);
+        return false;
+    }
+
+    // The tone comes after start() so it never plays for a recording that failed to
+    // begin, and before the first frame so the user can talk immediately.
+    voice::play(voice::Tone::Start);
+    screenBeforeVoice_ = screens::Screen::Reader;
+    voiceRecordScreen_.reset();
+    voiceClick_.reset();
+    screen_ = screens::Screen::VoiceRecord;
+    renderScreen(nowMs);
+    return true;
+}
+
+void App::finishVoiceNote(uint32_t nowMs) {
+    const char* failure = voiceRecorder_.error();
+    const uint32_t seconds = (voiceRecorder_.lastDurationMs() + 500U) / 1000U;
+
+    voice::play(failure != nullptr ? voice::Tone::Error : voice::Tone::Stop);
+    if (failure == nullptr) {
+        voiceService_.setCredentials(
+            {settingsStore_.settings().network.ssid, settingsStore_.secrets().wifiPassword});
+        voiceService_.requestFlush();
+    }
+
+    voiceClick_.reset();
+    screen_ = screenBeforeVoice_;
+
+    char detail[48] = {};
+    std::snprintf(detail, sizeof(detail), "%lus na fila", static_cast<unsigned long>(seconds));
+    showTransientStatus("Nota de voz", failure != nullptr ? failure : "Gravada", detail, 1200,
+                        screens::Screen::Reader);
+}
+
+screens::VoiceNotesModel App::voiceNotesModel() const {
+    screens::VoiceNotesModel model;
+    model.busy = voiceService_.busy();
+    model.error = voiceService_.lastError();
+    // Read straight from the card rather than from a cache: this screen is opened
+    // rarely and a stale list here is exactly the thing that erodes trust in it.
+    for (const auto& entry : voice::queue::pending(Board::Storage::filesystem())) {
+        screens::VoiceNoteRow row;
+        const size_t slash = entry.wavPath.find_last_of('/');
+        row.label = screens::labelFromRecordingName(
+            slash == std::string::npos ? entry.wavPath : entry.wavPath.substr(slash + 1));
+        row.detail = entry.metaPath.empty() ? "sem ancora" : "com ancora";
+        model.rows.push_back(std::move(row));
+    }
+    return model;
 }
 
 void App::handleTouch(uint32_t nowMs) {

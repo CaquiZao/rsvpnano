@@ -1,4 +1,6 @@
 #include "ui/screens/ReaderScreen.h"
+
+#include "reader/ChapterProgress.h"
 #include <esp_log.h>
 
 #include <algorithm>
@@ -478,7 +480,18 @@ namespace screens {
         const uint8_t progress = ReadingProgress::percent(session.state.wordIndex, ReadingLoop::wordCount(session));
         std::string footer;
         if (reading || settings.footerMetric == settings::FooterMetric::percentage) {
-            footer = std::to_string(progress) + "%";
+            // Chapter first, book second. Reading a whole chapter of a long book moves
+            // the book figure by under 4%, which reads as no progress at all; the
+            // chapter figure is the one that actually moves while you read.
+            const auto chapterPosition =
+                reading::chapterPositionAt(session.metadata.chapters, session.state.wordIndex,
+                                           ReadingLoop::wordCount(session));
+            if (chapterPosition.count > 0) {
+                footer = std::to_string(chapterPosition.percentInChapter) + "% Â· "
+                    + std::to_string(progress) + "%";
+            } else {
+                footer = std::to_string(progress) + "%";
+            }
         } else {
             size_t remainingWords = ReadingLoop::wordCount(session) > session.state.wordIndex
                                       ? ReadingLoop::wordCount(session) - session.state.wordIndex

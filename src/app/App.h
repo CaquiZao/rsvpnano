@@ -25,6 +25,11 @@
 #include "ui/screens/StandbyScreen.h"
 #include "update/OtaUpdater.h"
 #include "usb/UsbMassStorageManager.h"
+#include "ui/screens/VoiceNotesScreen.h"
+#include "ui/screens/VoiceRecordScreen.h"
+#include "voice/DoubleClick.h"
+#include "voice/VoiceRecorder.h"
+#include "voice/VoiceService.h"
 
 class App {
 public:
@@ -54,6 +59,13 @@ private:
     void renderScreen(uint32_t nowMs);
     void handleScreenAction(screens::Action action, uint32_t nowMs);
     void handleInput(Input::ActionMask actions, uint32_t nowMs);
+    // Voice notes. Split out so the additions to handleInput and update stay to a
+    // handful of lines and rebasing on upstream stays trivial.
+    void handleReaderPlayPause(uint32_t nowMs);
+    void updateVoice(uint32_t nowMs);
+    bool startVoiceNote(uint32_t nowMs);
+    void finishVoiceNote(uint32_t nowMs);
+    screens::VoiceNotesModel voiceNotesModel() const;
     void handleTouch(uint32_t nowMs);
     void runRss();
     void runBookOpen(size_t index, uint32_t nowMs);
@@ -99,6 +111,12 @@ private:
     CompanionApi companionApi_{settingsStore_,   storage_,       localeCatalog_, immediateUi_, readerScreen_,
                                interfaceScreen_, networkScreen_, libraryScreen_, focusScreen_};
     UsbMassStorageManager usbTransfer_;
+    screens::VoiceRecordScreen voiceRecordScreen_;
+    screens::VoiceNotesScreen voiceNotesScreen_;
+    voice::DoubleClick voiceClick_;
+    voice::Recorder voiceRecorder_;
+    voice::Service voiceService_;
+    screens::Screen screenBeforeVoice_ = screens::Screen::Reader;
     CompanionSerial serialCompanion_{companionApi_, usbTransfer_};
     screens::StandbyScreen standbyScreen_;
     QueueHandle_t jobQueue_ = nullptr;

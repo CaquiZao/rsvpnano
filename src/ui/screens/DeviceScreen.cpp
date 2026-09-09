@@ -42,7 +42,7 @@ namespace screens {
                        static_cast<int16_t>((actionsHeight - gap) / 2),
                        gap};
         } else {
-            ui::Grid all{content, 1, static_cast<int16_t>((content.h - gap * 5) / 6), gap};
+            ui::Grid all{content, 1, static_cast<int16_t>((content.h - gap * 6) / 7), gap};
             storageButton = all.next();
             encryptionButton = all.next();
             actions = all;
@@ -67,6 +67,8 @@ namespace screens {
             return Action::UsbTransfer;
         if (ui.button(actions.next(), ui.text(UiText::CompanionSync), true, ui::Icon::None, 2))
             return Action::CompanionSync;
+        if (ui.button(actions.next(), "Notas de voz", true, ui::Icon::None, 2))
+            return Action::VoiceNotes;
         if (ui.button(actions.next(), ui.text(UiText::RefreshRss), true, ui::Icon::None, 2))
             return Action::RssRefresh;
         if (ui.button(actions.next(), ui.text(UiText::OtaUpdate), true, ui::Icon::None, 2))

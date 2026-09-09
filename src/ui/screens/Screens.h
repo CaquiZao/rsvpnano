@@ -67,8 +67,11 @@ namespace screens {
         EnableStorageEncryption,
         OtaCheck,
         OtaInstall,
+        VoiceNotes,
+        VoiceFlush,
     };
 
+    Action voiceNotes(ui::Context& ui, Screen& screen);
     Action read(ui::Context& ui, std::string_view title, std::string_view author, uint8_t progress, Screen& screen);
     Action settings(ui::Context& ui, Screen& screen);
     bool readingSettings(ui::Context& ui, settings::ReadingSettings& settings, Screen& screen);
