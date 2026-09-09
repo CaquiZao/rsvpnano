@@ -69,6 +69,8 @@ namespace screens {
         OtaInstall,
         VoiceNotes,
         VoiceFlush,
+        VoicePlay,
+        VoiceStopPlayback,
     };
 
     Action voiceNotes(ui::Context& ui, Screen& screen);

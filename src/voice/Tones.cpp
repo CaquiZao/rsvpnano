@@ -13,13 +13,13 @@ namespace voice {
         // user is reading in a classroom: audible at arm's length, ignorable further
         // away. Loud feedback would make the feature unusable where it is most
         // wanted.
-        constexpr int16_t kQuiet = 2500;
+        constexpr int16_t kQuiet = 6000;
         // Register 0x32 in 0.5 dB steps, where 0xFF is roughly +32 dB: 0x60 lands
         // about 48 dB below what the codec boots with. Two attempts to quieten these
         // cues by scaling the samples failed because that digital gain swamped them,
         // so the volume is set where the gain actually is, and set low. Too quiet is
         // the safer error: this fires while the user is reading in a classroom.
-        constexpr uint8_t kQuietDac = 0x60;
+        constexpr uint8_t kQuietDac = 0x70;
 
         // A4, C#6 and A5: wide enough apart to be obvious over a small speaker.
         constexpr uint32_t kLow = 440;

@@ -226,7 +226,9 @@ void App::renderScreen(uint32_t nowMs) {
         return;
     case screens::Screen::VoiceNotes: {
         immediateUi_.beginFrame(static_cast<uint8_t>(screen_));
-        const screens::Action result = voiceNotesScreen_.draw(immediateUi_, voiceNotesModel(), nowMs, screen_);
+        voiceNotes_.busy = voiceService_.busy();
+        voiceNotes_.playing = voicePlayer_.active();
+        const screens::Action result = voiceNotesScreen_.draw(immediateUi_, voiceNotes_, nowMs, screen_);
         immediateUi_.endFrame();
         handleScreenAction(result, nowMs);
         return;
@@ -404,7 +406,18 @@ void App::handleScreenAction(screens::Action action, uint32_t nowMs) {
         return;
     case screens::Action::VoiceNotes:
         screen_ = screens::Screen::VoiceNotes;
+        refreshVoiceNotes();
         immediateUi_.invalidate();
+        renderScreen(nowMs);
+        return;
+    case screens::Action::VoicePlay:
+        if (voiceNotes_.selected < voiceNotes_.rows.size()) {
+            voicePlayer_.play(voiceNotes_.rows[voiceNotes_.selected].path);
+        }
+        renderScreen(nowMs);
+        return;
+    case screens::Action::VoiceStopPlayback:
+        voicePlayer_.requestStop();
         renderScreen(nowMs);
         return;
     case screens::Action::VoiceFlush:
@@ -637,21 +650,37 @@ void App::finishVoiceNote(uint32_t nowMs) {
                         screens::Screen::Reader);
 }
 
-screens::VoiceNotesModel App::voiceNotesModel() const {
-    screens::VoiceNotesModel model;
-    model.busy = voiceService_.busy();
-    model.error = voiceService_.lastError();
+void App::refreshVoiceNotes() {
+    const size_t selected = voiceNotes_.selected;
+    voiceNotes_.rows.clear();
     // Read straight from the card rather than from a cache: this screen is opened
-    // rarely and a stale list here is exactly the thing that erodes trust in it.
+    // rarely, and a stale list here is exactly what would stop the user trusting it.
     for (const auto& entry : voice::queue::pending(Board::Storage::filesystem())) {
         screens::VoiceNoteRow row;
         const size_t slash = entry.wavPath.find_last_of('/');
         row.label = screens::labelFromRecordingName(
             slash == std::string::npos ? entry.wavPath : entry.wavPath.substr(slash + 1));
-        row.detail = entry.metaPath.empty() ? "sem ancora" : "com ancora";
-        model.rows.push_back(std::move(row));
+        row.path = entry.wavPath;
+
+        // Duration comes from the WAV itself, so it is right even when the sidecar is
+        // missing: 16 kHz mono 16-bit past the 44 byte header.
+        File audio = Board::Storage::filesystem().open(entry.wavPath.c_str());
+        const size_t bytes = audio ? audio.size() : 0;
+        if (audio) {
+            audio.close();
+        }
+        const uint32_t durationMs =
+            bytes > 44U ? static_cast<uint32_t>(((bytes - 44U) / 2U) * 1000U / 16000U) : 0U;
+        row.detail = screens::formatDuration(durationMs);
+        if (entry.metaPath.empty()) {
+            row.detail += " - sem ancora";
+        }
+        voiceNotes_.rows.push_back(std::move(row));
     }
-    return model;
+    voiceNotes_.selected = voiceNotes_.rows.empty() ? 0 : std::min(selected, voiceNotes_.rows.size() - 1);
+    voiceNotes_.busy = voiceService_.busy();
+    voiceNotes_.playing = voicePlayer_.active();
+    voiceNotes_.error = voicePlayer_.error() != nullptr ? voicePlayer_.error() : voiceService_.lastError();
 }
 
 void App::handleTouch(uint32_t nowMs) {

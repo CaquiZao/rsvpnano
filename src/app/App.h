@@ -28,6 +28,7 @@
 #include "ui/screens/VoiceNotesScreen.h"
 #include "ui/screens/VoiceRecordScreen.h"
 #include "voice/DoubleClick.h"
+#include "voice/VoicePlayer.h"
 #include "voice/VoiceRecorder.h"
 #include "voice/VoiceService.h"
 
@@ -65,7 +66,7 @@ private:
     void updateVoice(uint32_t nowMs);
     bool startVoiceNote(uint32_t nowMs);
     void finishVoiceNote(uint32_t nowMs);
-    screens::VoiceNotesModel voiceNotesModel() const;
+    void refreshVoiceNotes();
     void handleTouch(uint32_t nowMs);
     void runRss();
     void runBookOpen(size_t index, uint32_t nowMs);
@@ -115,6 +116,8 @@ private:
     screens::VoiceNotesScreen voiceNotesScreen_;
     voice::DoubleClick voiceClick_;
     voice::Recorder voiceRecorder_;
+    voice::Player voicePlayer_;
+    screens::VoiceNotesModel voiceNotes_;
     voice::Service voiceService_;
     screens::Screen screenBeforeVoice_ = screens::Screen::Reader;
     CompanionSerial serialCompanion_{companionApi_, usbTransfer_};

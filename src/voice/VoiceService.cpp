@@ -3,6 +3,8 @@
 #include <esp_log.h>
 
 #include "board/BoardStorage.h"
+#include <WiFi.h>
+
 #include "network/WifiConnection.h"
 #include "voice/Clock.h"
 #include "voice/VoiceQueue.h"
@@ -111,10 +113,13 @@ namespace voice {
             !connected) {
             net::disconnect();
             busy_ = false;
-            lastError_ = "Wi-Fi indisponivel";
+            lastError_ = "Wi-Fi nao conectou";
             ESP_LOGW(kTag, "flush aborted: %s", connected.error().message().c_str());
             return;
         }
+
+        ESP_LOGI(kTag, "associated with \"%s\" as %s", WiFi.SSID().c_str(),
+                 WiFi.localIP().toString().c_str());
 
         // The clock is only worth setting while the radio is already up, and a note
         // recorded before the first sync still gets a real timestamp on the next one.
@@ -124,7 +129,7 @@ namespace voice {
         if (!endpoint) {
             net::disconnect();
             busy_ = false;
-            lastError_ = "Bridge nao encontrado";
+            lastError_ = "Bridge nao esta na rede";
             return;
         }
 

@@ -64,6 +64,15 @@ namespace Board::Audio {
         BoardDrivers::Es7210::scanBus(Wire1);
     }
 
+    bool writeSamples(const int16_t* samples, size_t sampleCount, uint32_t timeoutMs) {
+        // Playback needs the DAC path up; capture may have been the last thing to run.
+        if (!BoardPlatform::Es8311BoardAudio::available(gAudioContext)
+            || !BoardDrivers::Es8311::prepareOutput(gAudioContext)) {
+            return false;
+        }
+        return BoardDrivers::Es8311::writeSamples(gAudioContext, samples, sampleCount, timeoutMs);
+    }
+
     size_t readSamples(int16_t* samples, size_t sampleCount, uint32_t timeoutMs) {
         return BoardPlatform::Es8311BoardAudio::readSamples(gAudioContext, samples, sampleCount, timeoutMs);
     }

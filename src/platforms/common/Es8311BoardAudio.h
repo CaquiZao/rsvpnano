@@ -21,6 +21,8 @@ namespace {
     constexpr uint32_t kWriteTimeoutMs = 250;
     // What startCodec() leaves in register 0x32.
     constexpr uint8_t kDacFullVolume = 0xFF;
+    // Slack for the DMA ring to empty after the last byte is queued.
+    constexpr uint32_t kDrainMarginMs = 25;
     constexpr size_t kBeepFrames = (static_cast<size_t>(kSampleRateHz) * kBeepDurationMs) / 1000U;
     constexpr size_t kBeepSamples = kBeepFrames * 2U;
 
@@ -109,11 +111,17 @@ namespace BoardPlatform::Es8311BoardAudio {
             buffer[frame * 2U + 1U] = static_cast<int16_t>(sample);
         }
 
-        // Bring the DAC down for the tone and put it back afterwards, so the focus
-        // timer beep keeps the loudness it always had.
+        // Bring the DAC down for the tone and put it back afterwards, so the focus timer
+        // beep keeps the loudness it always had.
+        //
+        // The wait is the whole point: writeSamples returns once the bytes reach the
+        // I2S DMA, not once they have been heard. Restoring the volume immediately
+        // queued the tone quiet and played it loud, which is why three rounds of
+        // lowering the level changed nothing audible.
         BoardDrivers::Es8311::setOutputVolume(context, volume);
         const bool written = BoardDrivers::Es8311::writeSamples(context, buffer.data(), buffer.size(),
                                                                 kWriteTimeoutMs + durationMs);
+        delay(durationMs + kDrainMarginMs);
         BoardDrivers::Es8311::setOutputVolume(context, kDacFullVolume);
         return written;
     }

@@ -21,6 +21,8 @@ namespace Board::Audio {
     // Logs every I2C device that answers. Diagnostic only.
     void scanI2cBus();
     size_t readSamples(int16_t* samples, size_t sampleCount, uint32_t timeoutMs);
+    // Stereo interleaved, 16 kHz. Used to play a recorded note back.
+    bool writeSamples(const int16_t* samples, size_t sampleCount, uint32_t timeoutMs);
     bool inputAvailable();
 
 } // namespace Board::Audio

@@ -15,6 +15,9 @@ namespace voice {
 
         constexpr char kTag[] = "voice";
         constexpr char kService[] = "handybridge";
+        // What discovery.py publishes as the server name, and the port it binds.
+        constexpr char kHostname[] = "handy-bridge";
+        constexpr uint16_t kDefaultPort = 8787;
         constexpr char kPath[] = "/v1/notes";
         constexpr uint32_t kConnectTimeoutMs = 4000;
         // The bridge answers before transcribing, so it should reply in well under a
@@ -65,28 +68,42 @@ namespace voice {
 
     std::optional<Endpoint> discoverBridge(uint32_t timeoutMs) {
         if (WiFi.status() != WL_CONNECTED) {
+            ESP_LOGW(kTag, "discovery skipped: no Wi-Fi");
             return std::nullopt;
         }
-        // MDNS.begin is idempotent enough to call again; the companion API may already
-        // have started it for its own service.
-        MDNS.begin(WiFi.getHostname());
+        // Idempotent enough to call again; the companion API may already have started
+        // mDNS for its own service.
+        if (!MDNS.begin(WiFi.getHostname())) {
+            ESP_LOGW(kTag, "MDNS.begin failed");
+        }
 
         const uint32_t deadline = millis() + timeoutMs;
+        uint32_t attempt = 0;
         do {
+            ++attempt;
             const int found = MDNS.queryService(kService, "tcp");
+            ESP_LOGI(kTag, "query %u for _%s._tcp returned %d", static_cast<unsigned>(attempt), kService, found);
             for (int index = 0; index < found; ++index) {
                 const IPAddress address = MDNS.address(index);
                 const uint16_t port = MDNS.port(index);
+                ESP_LOGI(kTag, "  candidate %s:%u", address.toString().c_str(), static_cast<unsigned>(port));
                 if (port != 0 && address != IPAddress()) {
                     Endpoint endpoint{std::string(address.toString().c_str()), port};
-                    ESP_LOGI(kTag, "bridge at %s:%u", endpoint.host.c_str(), static_cast<unsigned>(port));
                     return endpoint;
                 }
             }
-            delay(200);
         } while (static_cast<int32_t>(millis() - deadline) < 0);
 
-        ESP_LOGW(kTag, "no _%s._tcp on this network", kService);
+        // Service discovery can come back empty on networks that drop the PTR query
+        // while still answering an A query. The bridge publishes itself as
+        // handy-bridge.local, so ask for the host directly before giving up.
+        const IPAddress host = MDNS.queryHost(kHostname, 2000);
+        if (host != IPAddress()) {
+            ESP_LOGI(kTag, "found %s.local at %s", kHostname, host.toString().c_str());
+            return Endpoint{std::string(host.toString().c_str()), kDefaultPort};
+        }
+
+        ESP_LOGW(kTag, "no _%s._tcp and no %s.local on this network", kService, kHostname);
         return std::nullopt;
     }
 

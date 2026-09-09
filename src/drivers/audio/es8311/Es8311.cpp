@@ -260,9 +260,18 @@ namespace BoardDrivers::Es8311 {
         }
         // begin() is idempotent, and ESP_I2S allocates the RX channel alongside TX as
         // soon as both data pins are set, so capture and beep share one peripheral.
-        // I2C on this board drops the occasional transaction, so one retry: a codec
-        // that answered a moment ago is worth asking twice before giving up.
-        if (!begin(context) && !begin(context)) {
+        // I2C on this board drops the occasional transaction. Retrying immediately is
+        // not a retry at all: the two attempts hit the same disturbed bus and both
+        // failed on the device, costing a recording. Give it time to settle, and try
+        // three times, since the cost of a wasted 30 ms is nothing next to a lost note.
+        bool ready = false;
+        for (uint8_t attempt = 0; attempt < 3 && !ready; ++attempt) {
+            if (attempt > 0) {
+                delay(15);
+            }
+            ready = begin(context);
+        }
+        if (!ready) {
             return false;
         }
 
