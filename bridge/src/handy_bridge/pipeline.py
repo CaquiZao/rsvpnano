@@ -90,6 +90,7 @@ def process_note(
     body = raw_text or EMPTY_BODY
 
     tasks: list[Task] = []
+    asked: list[str] = []
     answers: list[Answer] = []
     # Resolved without the model so the spoken marker word still works when
     # post-processing is switched off or fails.
@@ -102,13 +103,14 @@ def process_note(
             tags = result.tags
             body = result.cleaned or raw_text
             tasks = result.tasks
+            asked = result.questions
             note_kind = result.kind
         except PostProcessError as exc:
             # A post-processing failure must never cost a note.
             log.warning("post-processing failed for %s: %s", incoming.note_id, exc)
 
     excerpt = incoming.meta.get("excerpt") or None
-    questions = [task.text for task in tasks if task.answerable]
+    questions = _questions_to_answer(note_kind, asked, tasks, body)
     if processor is not None and questions and cfg.post_process.answer_tasks:
         try:
             answers = processor.answer_tasks(questions, excerpt)
@@ -235,6 +237,32 @@ def _update_board(
     kanban.ensure_board(board)
     for lane, cards in by_lane.items():
         kanban.add_cards(board, lane, cards)
+
+
+def _questions_to_answer(
+    note_kind: str, asked: list[str], tasks: list[Task], body: str
+) -> list[str]:
+    """Everything worth answering for this note, without duplicates.
+
+    Three sources, in order of how directly they say "answer me": the questions
+    the model heard, the tasks it judged answerable, and — only for a recording
+    classified as a question that produced neither — the cleaned text itself.
+
+    That last fallback exists because of a real failure: a recording plainly about
+    a question came back with no question and no task, so nothing was answered and
+    nothing explained why. A note classified `pergunta` never going unanswered is
+    worth one call more than being clever about it.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for question in [*asked, *(t.text for t in tasks if t.answerable)]:
+        key = question.strip().casefold()
+        if question.strip() and key not in seen:
+            seen.add(key)
+            out.append(question.strip())
+    if not out and note_kind == "pergunta" and body.strip():
+        out.append(body.strip())
+    return out
 
 
 def _last_recall_offset(cfg: Config, book: str, chapter: int) -> int | None:

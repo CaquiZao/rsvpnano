@@ -35,6 +35,10 @@ PROMPT = (
     'Use "anotação" para comentário, opinião ou registro solto. '
     'Em dúvida entre recall e anotação, escolha "anotação": afirmar o que se entendeu '
     "para ser corrigido é diferente de comentar o que se leu.\n"
+    '"questions" são as perguntas que a pessoa fez em voz alta e que dá para '
+    "responder em poucas frases, cada uma reescrita como pergunta direta. Liste "
+    'vazio quando ela não perguntou nada. Isto é independente de "tasks": uma '
+    "pergunta é algo a responder, uma pendência é algo a fazer.\n"
     '"tasks" são pendências que a pessoa deixou. Use "keyword" quando ela disser '
     "explicitamente uma palavra marcadora (" + ", ".join(MARKER_WORDS) + ") seguida de "
     'uma ação. Use "inferred" quando não disser a palavra mas houver intenção clara de '
@@ -54,6 +58,15 @@ ANSWER_PROMPT = (
     "Cada resposta deve ter NO MÁXIMO 120 palavras, ser direta e concreta. "
     "Não comece com introduções como 'Ótima pergunta'. Não repita a pergunta na resposta. "
     "Se não souber com segurança, diga isso em uma frase em vez de especular.\n"
+    "O trecho do livro, quando vier, diz apenas ONDE a pessoa estava lendo. Ele é "
+    "contexto, NÃO é o limite do que você pode usar: responda com seu conhecimento "
+    "geral. Se o trecho ajudar, ancore a resposta nele; se não tiver relação com a "
+    "pergunta, ignore o trecho e responda de qualquer forma, mencionando em uma "
+    "frase que a dúvida não vem do trecho. "
+    "NUNCA recuse uma pergunta por ela não estar no trecho — a pessoa gravou uma "
+    "pergunta e uma recusa não é resposta.\n"
+    "Responda cada pergunta individualmente. Duas respostas idênticas para "
+    "perguntas diferentes significam que você não respondeu nenhuma.\n"
 )
 
 RECALL_PROMPT = (
@@ -76,23 +89,26 @@ RECALL_PROMPT = (
 )
 
 CHAPTER_SUMMARY_PROMPT = (
-    "Abaixo está tudo o que uma pessoa registrou por voz enquanto lia um capítulo: "
-    "anotações, perguntas com as respostas que recebeu, e conferências do que ela "
+    "Abaixo está tudo o que você registrou por voz enquanto lia um capítulo: "
+    "anotações, perguntas com as respostas que recebeu, e conferências do que "
     "lembrou. Escreva uma síntese do capítulo.\n"
     "Responda APENAS com um objeto JSON válido, sem cercas de código, no formato "
     '{"synthesis": string}.\n'
     "A síntese deve ter NO MÁXIMO 350 palavras, ser organizada e fácil de absorver, "
-    "e usar SOMENTE o que está nos registros abaixo. Não acrescente conhecimento seu "
-    "sobre o livro nem preencha lacunas: o valor da síntese é ser o espelho do que a "
-    "pessoa de fato entendeu, com as lacunas que isso tiver.\n"
-    "Quando uma conferência mostrar que a pessoa entendeu algo errado, registre as "
-    "duas versões — o que ela disse e o que o livro afirma — em vez de só a correta.\n"
+    "e usar SOMENTE o que está nos registros abaixo. Não acrescente conhecimento "
+    "sobre o livro nem preencha lacunas: o valor da síntese é ser o espelho do que "
+    "quem gravou de fato entendeu, com as lacunas que isso tiver.\n"
+    "ESCREVA EM SEGUNDA PESSOA, falando com quem gravou: \"você entendeu\", "
+    "\"você perguntou\". NUNCA na terceira pessoa (\"a pessoa\", \"ela\") — é o "
+    "caderno de quem gravou, não um relatório sobre ela.\n"
+    "Quando uma conferência mostrar que você entendeu algo errado, registre as duas "
+    "versões — o que você disse e o que o livro afirma — em vez de só a correta.\n"
 )
 
 BOOK_SUMMARY_PROMPT = (
     "Abaixo estão as sínteses dos capítulos de um livro, escritas a partir do que "
-    "uma pessoa registrou enquanto lia. Extraia os pontos mais importantes do livro "
-    "como um todo.\n"
+    "você registrou enquanto lia. Extraia os pontos mais importantes do livro como "
+    "um todo, em segunda pessoa e nunca na terceira.\n"
     "Responda APENAS com um objeto JSON válido, sem cercas de código, no formato "
     '{"bullets": array de strings}.\n'
     "De 5 a 10 itens, cada um em uma frase, ordenados do mais para o menos "
@@ -246,6 +262,13 @@ class ClaudeCliProcessor:
             tags=tags,
             cleaned=str(payload["cleaned"]).strip(),
             tasks=_parse_tasks(payload.get("tasks")),
+            # `is not None` before str(): a null in the array would otherwise
+            # become the literal string "None" and be answered as a question.
+            questions=[
+                str(item).strip()
+                for item in (payload.get("questions") or [])
+                if item is not None and str(item).strip()
+            ],
             # The spoken marker word beats the model's inference, so the decision
             # goes through resolve_kind rather than straight into the result.
             kind=resolve_kind(transcript, str(payload.get("kind", "")) or None),

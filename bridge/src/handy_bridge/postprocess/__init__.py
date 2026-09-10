@@ -57,6 +57,11 @@ class PostProcessResult:
     tags: list[str]
     cleaned: str
     tasks: list[Task] = field(default_factory=list)
+    # Questions asked out loud, kept separate from `tasks` on purpose. A task is
+    # something to do; a question is something to answer. Conflating them meant
+    # answering depended on the deliberately conservative task extraction, so a
+    # recording plainly classified as a question could come back unanswered.
+    questions: list[str] = field(default_factory=list)
     # Defaulted so a backend that does not classify still returns a usable result.
     kind: NoteKind = DEFAULT_KIND
 

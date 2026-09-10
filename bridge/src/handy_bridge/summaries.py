@@ -321,20 +321,34 @@ def sections_from(notes: list[NoteSummary]) -> dict[str, list[str]]:
     a matter of quoting the notes, and quoting cannot hallucinate — so it stays
     out of the model's hands and costs nothing.
     """
+    # Every kind maps to the section it belongs in, so a note is never invisible
+    # in all three. A question that came back unanswered used to be: it added
+    # nothing to Anotações (wrong kind) and nothing to Perguntas (no answer
+    # callout to read), so only the synthesis ever saw it.
+    own_section = {
+        "anotação": "Anotações",
+        "pergunta": "Perguntas e respostas",
+        "recall": "Recall",
+    }
+
     sections: dict[str, list[str]] = {name: [] for name in SECTION_ORDER}
     for note in notes:
         link = f"[[{note.stem}]]"
-        if note.kind == "anotação" and note.body:
-            sections["Anotações"].append(f"{_trim(note.body)} {link}")
         for question, answer in note.questions:
             sections["Perguntas e respostas"].append(
                 f"**{question}** — {_trim(answer)} {link}"
             )
         for item in note.recall:
             sections["Recall"].append(f"{item} {link}")
-        # A recall note whose check never came back still belongs in the section.
-        if note.kind == "recall" and not note.recall and note.body:
-            sections["Recall"].append(f"{_trim(note.body)} {link}")
+
+        # The note's own words. Skipped only for a question that was answered:
+        # there the Q&A pair already carries what was asked, and the fallback in
+        # the pipeline can make the question *be* the body, which would print it
+        # twice. An annotation's body is the content itself, so it always goes in.
+        superseded = note.kind == "pergunta" and bool(note.questions)
+        if note.body and not superseded:
+            target = own_section.get(note.kind, "Anotações")
+            sections[target].append(f"{_trim(note.body)} {link}")
     return sections
 
 

@@ -353,3 +353,43 @@ def test_check_recall_sends_both_the_passage_and_the_speech():
     ClaudeCliProcessor("m", runner=runner).check_recall("minha fala", "o trecho lido")
     assert "minha fala" in seen["prompt"]
     assert "o trecho lido" in seen["prompt"]
+
+
+def test_process_reads_the_questions_separately_from_the_tasks():
+    inner = (
+        '{"title":"T","tags":[],"cleaned":"C","kind":"pergunta",'
+        '"questions":["O que e entropia?"],"tasks":[]}'
+    )
+    got = _processor(inner).process("o que e entropia?")
+    assert got.questions == ["O que e entropia?"]
+    assert got.tasks == []
+
+
+def test_questions_default_to_empty_when_the_model_omits_them():
+    inner = '{"title":"T","tags":[],"cleaned":"C"}'
+    assert _processor(inner).process("x").questions == []
+
+
+def test_blank_questions_from_the_model_are_dropped():
+    inner = '{"title":"T","tags":[],"cleaned":"C","questions":["  ",null,"Real?"]}'
+    assert _processor(inner).process("x").questions == ["Real?"]
+
+
+def test_the_prompt_asks_for_questions_apart_from_tasks():
+    seen = {}
+
+    def runner(cmd, timeout):
+        seen["prompt"] = cmd[2]
+        return FakeCompleted(wrapper('{"title":"T","tags":[],"cleaned":"C"}'))
+
+    ClaudeCliProcessor("m", runner=runner).process("x")
+    assert '"questions"' in seen["prompt"]
+    assert "algo a responder" in seen["prompt"]
+
+
+def test_the_chapter_summary_prompt_demands_second_person():
+    from handy_bridge.postprocess.claude_cli import CHAPTER_SUMMARY_PROMPT
+
+    # O resumo saiu falando "a pessoa" e "ela"; num caderno pessoal isso le errado.
+    assert "SEGUNDA PESSOA" in CHAPTER_SUMMARY_PROMPT
+    assert "NUNCA na terceira pessoa" in CHAPTER_SUMMARY_PROMPT
