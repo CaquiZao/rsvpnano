@@ -204,3 +204,46 @@ token   = "123:ABC"
 chat_id = ""
 """,
         )
+
+
+def test_drive_is_disabled_by_default(tmp_path):
+    cfg = base_cfg(tmp_path)
+    assert cfg.drive.enabled is False
+    assert cfg.drive.poll_s == 30
+
+
+def test_drive_reads_credentials_and_poll_interval(tmp_path):
+    cfg = base_cfg(
+        tmp_path,
+        extra="""
+[drive]
+enabled = true
+client_id = "cid"
+client_secret = "csec"
+refresh_token = "rtok"
+folder_id = "fid"
+poll_s = 15
+""",
+    )
+    assert cfg.drive.enabled is True
+    assert cfg.drive.client_id == "cid"
+    assert cfg.drive.client_secret == "csec"
+    assert cfg.drive.refresh_token == "rtok"
+    assert cfg.drive.folder_id == "fid"
+    assert cfg.drive.poll_s == 15
+
+
+def test_drive_enabled_without_refresh_token_is_an_error(tmp_path):
+    with pytest.raises(ConfigError, match="refresh_token"):
+        base_cfg(
+            tmp_path,
+            extra='[drive]\nenabled = true\nclient_id = "c"\nclient_secret = "s"\nfolder_id = "f"\n',
+        )
+
+
+def test_drive_enabled_without_folder_id_is_an_error(tmp_path):
+    with pytest.raises(ConfigError, match="folder_id"):
+        base_cfg(
+            tmp_path,
+            extra='[drive]\nenabled = true\nclient_id = "c"\nclient_secret = "s"\nrefresh_token = "r"\n',
+        )
