@@ -100,12 +100,13 @@ def test_add_cards_accepts_raw_text_or_rendered_lines(tmp_path):
 
 def test_board_path_uses_the_book_stem(tmp_path):
     got = board_path_for(tmp_path, "Quadros", "epdf.pub_sapiens")
-    assert got == tmp_path / "Quadros" / "epdf.pub_sapiens.md"
+    # O quadro mora dentro do diretorio do livro, junto das notas e resumos.
+    assert got == tmp_path / "Livros" / "epdf.pub_sapiens" / "Quadro.md"
 
 
 def test_board_path_falls_back_to_a_general_board(tmp_path):
     got = board_path_for(tmp_path, "Quadros", None)
-    assert got == tmp_path / "Quadros" / "Geral.md"
+    assert got == tmp_path / "Geral" / "Quadro.md"
 
 
 def test_add_cards_rejects_a_file_that_is_not_a_board(tmp_path):

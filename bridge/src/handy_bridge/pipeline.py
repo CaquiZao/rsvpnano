@@ -8,11 +8,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
-from handy_bridge import kanban
+from handy_bridge import chapters as chapters_mod
+from handy_bridge import kanban, layout
 from handy_bridge import wav as wav_mod
 from handy_bridge.config import AsrConfig, Config
-from handy_bridge.epub import EpubError, ensure_book_markdown
-from handy_bridge.note import NoteData, inbox_path_for, write_note
+from handy_bridge.epub import EpubError, ensure_book_markdown, epub_source
+from handy_bridge.kind import resolve_kind
+from handy_bridge.note import NoteData, write_note
 from handy_bridge.postprocess import Answer, PostProcessError, PostProcessor, Task
 from handy_bridge.telegram import build_message
 from handy_bridge.transcriber import Transcription
@@ -83,6 +85,9 @@ def process_note(
 
     tasks: list[Task] = []
     answers: list[Answer] = []
+    # Resolved without the model so the spoken marker word still works when
+    # post-processing is switched off or fails.
+    note_kind = resolve_kind(raw_text, None)
 
     if processor is not None and raw_text:
         try:
@@ -91,6 +96,7 @@ def process_note(
             tags = result.tags
             body = result.cleaned or raw_text
             tasks = result.tasks
+            note_kind = result.kind
         except PostProcessError as exc:
             # A post-processing failure must never cost a note.
             log.warning("post-processing failed for %s: %s", incoming.note_id, exc)
@@ -105,17 +111,30 @@ def process_note(
             log.warning("answering failed for %s: %s", incoming.note_id, exc)
 
     book = incoming.meta.get("book") or None
+    raw_offset = incoming.meta.get("word_offset")
+    word_offset = int(raw_offset) if raw_offset is not None else None
+
+    chapter = None
+    width = layout.MIN_CHAPTER_DIGITS
     if book:
         try:
             ensure_book_markdown(cfg.vault_path, book)
         except (EpubError, OSError) as exc:
             # Best-effort: the book text is a convenience, never a reason to lose a note.
             log.warning("could not convert book %r: %s", book, exc)
+        # load_index swallows its own failures and returns None, so an unreadable
+        # book costs the chapter fields and nothing else.
+        index = chapters_mod.load_index(
+            layout.source_dir(cfg.vault_path, book),
+            book,
+            epub_source(cfg.vault_path, book),
+        )
+        if index is not None:
+            width = index.width
+            chapter = chapters_mod.resolve(index, excerpt, word_offset)
 
-    word_offset = incoming.meta.get("word_offset")
     note_path = write_note(
-        # One folder per book, matching the Kanban board for the same reading.
-        inbox_path_for(cfg.inbox_path, book),
+        layout.notes_dir(cfg.vault_path, book),
         NoteData(
             title=title,
             tags=tags,
@@ -125,12 +144,17 @@ def process_note(
             date_estimated=estimated,
             duration_s=info.duration_s,
             asr_model=transcription.model,
+            kind=note_kind,
             # Anchor fields arrive only when the device recorded from the reader.
             book=book,
-            word_offset=int(word_offset) if word_offset is not None else None,
+            word_offset=word_offset,
             excerpt=excerpt,
+            chapter=chapter.chapter if chapter else None,
+            chapter_title=chapter.title if chapter else None,
+            chapter_source=chapter.source if chapter else None,
             answers=[(a.question, a.answer) for a in answers],
         ),
+        width=width,
     )
 
     # Everything below is best-effort: the note is already safe on disk.

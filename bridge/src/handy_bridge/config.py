@@ -51,6 +51,8 @@ class TelegramConfig:
 @dataclass(frozen=True)
 class Config:
     vault_path: Path
+    # Legacy and unused: notes now live in `Livros/<book>/Notas`, computed by the
+    # `layout` module. Kept so an existing config.toml keeps loading.
     inbox_folder: str
     audio_store: Path
     port: int
@@ -61,9 +63,6 @@ class Config:
     telegram: TelegramConfig = TelegramConfig()
     digest: DigestConfig = DigestConfig()
 
-    @property
-    def inbox_path(self) -> Path:
-        return self.vault_path / self.inbox_folder
 
 
 def _require(table: dict, key: str, where: str):
@@ -120,7 +119,7 @@ def load_config(path: Path) -> Config:
 
     return Config(
         vault_path=vault_path,
-        inbox_folder=_require(raw, "inbox_folder", "config"),
+        inbox_folder=str(raw.get("inbox_folder", "Inbox")),
         audio_store=audio_store,
         port=int(_require(raw, "port", "config")),
         asr=AsrConfig(

@@ -170,15 +170,30 @@ def convert_to_markdown(epub_path: Path, out_path: Path) -> Path:
     return out_path
 
 
-def ensure_book_markdown(
-    vault_path: Path, book_stem: str, subfolder: str = "Books"
-) -> Path | None:
-    """Convert `<vault>/<stem>.epub` once. Returns the markdown path, or None."""
-    vault_path = Path(vault_path)
-    target = vault_path / subfolder / f"{book_stem}.md"
+def epub_source(vault_path: Path, book_stem: str) -> Path:
+    """Locate a book's epub, in the new layout or where an old vault kept it.
+
+    Falling back to the vault root means a vault that has not been migrated yet
+    keeps working, which matters because the migration itself needs to read the
+    epub to resolve chapters.
+    """
+    from handy_bridge.layout import source_dir
+
+    candidates = [
+        source_dir(vault_path, book_stem) / f"{book_stem}.epub",
+        Path(vault_path) / f"{book_stem}.epub",
+    ]
+    return next((c for c in candidates if c.is_file()), candidates[0])
+
+
+def ensure_book_markdown(vault_path: Path, book_stem: str) -> Path | None:
+    """Convert a book's epub to markdown once. Returns the path, or None."""
+    from handy_bridge.layout import source_dir
+
+    target = source_dir(vault_path, book_stem) / f"{book_stem}.md"
     if target.exists():
         return target
-    source = vault_path / f"{book_stem}.epub"
+    source = epub_source(vault_path, book_stem)
     if not source.is_file():
         log.info("no epub found for %r in %s", book_stem, vault_path)
         return None

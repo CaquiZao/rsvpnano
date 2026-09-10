@@ -33,9 +33,16 @@ class KanbanError(Exception):
 
 
 def board_path_for(vault_path: Path, subfolder: str, book_stem: str | None) -> Path:
-    """One board per book; recordings made outside the reader share a general board."""
-    name = book_stem or GENERAL_BOARD
-    return Path(vault_path) / subfolder / f"{name}.md"
+    """One board per book; recordings made outside the reader share a general board.
+
+    `subfolder` is accepted and ignored: the board now lives inside the book's own
+    directory, next to its notes and summaries. The parameter stays so an existing
+    config.toml with `[kanban] subfolder` keeps loading.
+    """
+    from handy_bridge.layout import board_path
+
+    del subfolder
+    return board_path(vault_path, book_stem)
 
 
 def _strip_marker(text: str) -> str:

@@ -4,10 +4,12 @@ from pathlib import Path
 
 import pytest
 
+from handy_bridge import layout
 from handy_bridge.config import AsrConfig, Config, PostProcessConfig
 from handy_bridge.pipeline import IncomingNote, process_note, resolve_recorded_at
 from handy_bridge.postprocess import PostProcessError, PostProcessResult
 from handy_bridge.transcriber import Transcription, TranscriptionError
+from test_epub import make_epub_with
 
 ARRIVED = datetime(2026, 9, 7, 15, 0, 0)
 
@@ -108,7 +110,9 @@ def test_writes_note_with_post_processed_fields(tmp_path):
     )
     text = path.read_text(encoding="utf-8")
 
-    assert path.name == "2026-09-07 1432 - Meu titulo.md"
+    # Sem livro nao ha capitulo nem offset, entao o prefixo de posicao e zero e
+    # a data segue no frontmatter, onde as views de Bases ordenam por ela.
+    assert path.name == "00-000000 Meu titulo.md"
     assert "Texto limpo." in text
     assert "> ola mundo" in text  # transcrição crua preservada
     assert "tags: [ideia]" in text
@@ -319,7 +323,7 @@ def test_cards_land_in_the_lane_that_matches_their_source(tmp_path):
     )
     process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc)
 
-    board = (cfg.vault_path / "Quadros" / "sapiens.md").read_text(encoding="utf-8")
+    board = (cfg.vault_path / "Livros" / "sapiens" / "Quadro.md").read_text(encoding="utf-8")
     lines = board.splitlines()
 
     def lane_cards(lane):
@@ -344,7 +348,7 @@ def test_card_links_back_to_the_note(tmp_path):
     cfg = cfg_with(tmp_path)
     proc = RichProcessor(PPR("Meu titulo", [], "C", tasks=[Task("Uma tarefa", "keyword", False)]))
     path = process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc)
-    board = (cfg.vault_path / "Quadros" / "sapiens.md").read_text(encoding="utf-8")
+    board = (cfg.vault_path / "Livros" / "sapiens" / "Quadro.md").read_text(encoding="utf-8")
     assert f"[[{path.stem}]]" in board
 
 
@@ -356,7 +360,7 @@ def test_note_without_a_book_uses_the_general_board(tmp_path):
     )
     proc = RichProcessor(PPR("T", [], "C", tasks=[Task("Solta", "keyword", False)]))
     process_note(incoming, cfg, transcribe_fn=ok_transcribe(), processor=proc)
-    assert (cfg.vault_path / "Quadros" / "Geral.md").exists()
+    assert (cfg.vault_path / "Geral" / "Quadro.md").exists()
 
 
 def test_kanban_disabled_creates_no_board(tmp_path):
@@ -415,3 +419,135 @@ def test_telegram_not_called_when_there_is_nothing_answered(tmp_path):
     tg = RecordingTelegram()
     process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc, telegram=tg)
     assert tg.sent == []
+
+
+# --- layout por livro e resolucao de capitulo -------------------------------
+
+
+def vault_with_epub(tmp_path, bodies, stem="livro") -> Config:
+    """Config whose vault already holds a book, in the migrated layout."""
+    cfg = make_cfg(tmp_path)
+    source = layout.source_dir(cfg.vault_path, stem)
+    source.mkdir(parents=True, exist_ok=True)
+    make_epub_with(source / f"{stem}.epub", bodies)
+    return cfg
+
+
+CH_ONE = ("c1.xhtml", "<h1>Um</h1><p>o comeco do livro fala de outras coisas quaisquer</p>")
+CH_TWO = (
+    "c2.xhtml",
+    "<h1>Dois</h1><p>humanos chegaram a ilha de Flores quando o nivel do mar"
+    " estava excepcionalmente baixo</p>",
+)
+
+
+def test_process_note_writes_into_the_book_layout_with_a_resolved_chapter(tmp_path):
+    cfg = vault_with_epub(tmp_path, [CH_ONE, CH_TWO])
+    incoming = IncomingNote(
+        "n",
+        make_wav(tmp_path / "n.wav"),
+        {
+            "clock_synced": True,
+            "recorded_at": "2026-09-09T22:05:40",
+            "book": "livro",
+            "word_offset": 1324,
+            # Acentos, pontuacao e caixa diferentes do markdown convertido.
+            "excerpt": "Humanos chegaram à ilha de Flores, quando o nível do mar"
+            " estava excepcionalmente baixo!",
+        },
+    )
+    path = process_note(
+        incoming,
+        cfg,
+        transcribe_fn=ok_transcribe("recapitulando o capitulo"),
+        processor=None,
+    )
+
+    assert path.parent == cfg.vault_path / "Livros" / "livro" / "Notas"
+    assert path.name.startswith("02-001324 ")
+    text = path.read_text(encoding="utf-8")
+    assert "chapter: 2" in text
+    assert 'chapter_title: "Dois"' in text
+    assert "chapter_source: exato" in text
+    # Sem processor, o override falado ainda tem de valer.
+    assert "kind: recall" in text
+
+
+def test_process_note_falls_back_to_an_estimate_without_a_usable_excerpt(tmp_path):
+    cfg = vault_with_epub(tmp_path, [CH_ONE, CH_TWO])
+    incoming = IncomingNote(
+        "n",
+        make_wav(tmp_path / "n.wav"),
+        {"clock_synced": True, "book": "livro", "word_offset": 2, "excerpt": ""},
+    )
+    text = process_note(
+        incoming, cfg, transcribe_fn=ok_transcribe(), processor=None
+    ).read_text(encoding="utf-8")
+    assert "chapter_source: estimado" in text
+
+
+def test_process_note_without_a_book_lands_in_geral(tmp_path):
+    cfg = make_cfg(tmp_path)
+    incoming = IncomingNote(
+        "n", make_wav(tmp_path / "n.wav"), {"clock_synced": True}
+    )
+    path = process_note(incoming, cfg, transcribe_fn=ok_transcribe(), processor=None)
+    assert path.parent == cfg.vault_path / "Geral" / "Notas"
+    assert "chapter:" not in path.read_text(encoding="utf-8")
+
+
+def test_a_broken_epub_still_produces_a_note(tmp_path):
+    # Regra global: uma conveniencia quebrada nunca custa uma nota.
+    cfg = make_cfg(tmp_path)
+    source = layout.source_dir(cfg.vault_path, "livro")
+    source.mkdir(parents=True, exist_ok=True)
+    (source / "livro.epub").write_bytes(b"nao sou um zip")
+    incoming = IncomingNote(
+        "n",
+        make_wav(tmp_path / "n.wav"),
+        {"clock_synced": True, "book": "livro", "excerpt": "qualquer coisa aqui"},
+    )
+    path = process_note(incoming, cfg, transcribe_fn=ok_transcribe(), processor=None)
+    assert path.is_file()
+    assert "chapter:" not in path.read_text(encoding="utf-8")
+
+
+def test_an_unmigrated_vault_still_finds_the_epub_at_the_root(tmp_path):
+    # A propria migracao precisa ler o epub para resolver capitulos, entao o
+    # fallback para a raiz do vault nao e cortesia: e pre-requisito dela.
+    cfg = make_cfg(tmp_path)
+    make_epub_with(cfg.vault_path / "livro.epub", [CH_ONE, CH_TWO])
+    incoming = IncomingNote(
+        "n",
+        make_wav(tmp_path / "n.wav"),
+        {
+            "clock_synced": True,
+            "book": "livro",
+            "word_offset": 5,
+            "excerpt": "humanos chegaram a ilha de Flores quando o nivel do mar",
+        },
+    )
+    text = process_note(
+        incoming, cfg, transcribe_fn=ok_transcribe(), processor=None
+    ).read_text(encoding="utf-8")
+    assert "chapter: 2" in text and "chapter_source: exato" in text
+
+
+def test_two_notes_at_the_same_position_do_not_collide(tmp_path):
+    # As notas reais de 14:00 e 16:10 compartilham o offset 8120.
+    cfg = vault_with_epub(tmp_path, [CH_ONE, CH_TWO])
+    meta = {
+        "clock_synced": True,
+        "book": "livro",
+        "word_offset": 1324,
+        "excerpt": "humanos chegaram a ilha de Flores quando o nivel do mar",
+    }
+    first = process_note(
+        IncomingNote("a", make_wav(tmp_path / "a.wav"), meta),
+        cfg, transcribe_fn=ok_transcribe(), processor=None,
+    )
+    second = process_note(
+        IncomingNote("b", make_wav(tmp_path / "b.wav"), meta),
+        cfg, transcribe_fn=ok_transcribe(), processor=None,
+    )
+    assert first != second and second.name.endswith("-2.md")

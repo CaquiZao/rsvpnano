@@ -132,11 +132,11 @@ def test_rejects_epub_without_container(tmp_path):
         convert_to_markdown(p, tmp_path / "out.md")
 
 
-def test_ensure_creates_markdown_under_subfolder(tmp_path):
+def test_ensure_creates_markdown_under_the_book_source_folder(tmp_path):
     make_epub(tmp_path / "sapiens.epub")
     out = ensure_book_markdown(tmp_path, "sapiens")
     assert out is not None
-    assert out == tmp_path / "Books" / "sapiens.md"
+    assert out == tmp_path / "Livros" / "sapiens" / "fonte" / "sapiens.md"
     assert "Primeiro Capitulo" in out.read_text(encoding="utf-8")
 
 
