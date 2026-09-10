@@ -1,0 +1,119 @@
+from handy_bridge import chapters as chapters_mod
+from test_epub import make_epub_with
+
+# A passagem repetida e longa de proposito: um trecho real vem do device como um
+# paragrafo inteiro, e MIN_EXCERPT_CHARS existe justamente para descartar trecho
+# curto demais para identificar posicao.
+REPEATED = "o gato subiu no telhado e ficou olhando a rua inteira sem pressa"
+UNIQUE = "humanos chegaram a ilha de Flores quando o nivel do mar estava baixo"
+
+IDX = chapters_mod.BookIndex(
+    chapters=[
+        chapters_mod.Chapter(1, "Um", 100, chapters_mod.normalize(REPEATED)),
+        chapters_mod.Chapter(2, "Dois", 100, chapters_mod.normalize(UNIQUE)),
+        chapters_mod.Chapter(3, "Três", 100, chapters_mod.normalize(REPEATED)),
+    ]
+)
+
+
+def test_resolve_exact_match_is_exact():
+    got = chapters_mod.resolve(IDX, UNIQUE + "!", word_offset=None)
+    assert (got.chapter, got.source) == (2, "exato")
+
+
+def test_resolve_ignores_punctuation_case_and_spacing():
+    # E a diferenca real entre o excerpt do device e o markdown do bridge.
+    messy = "  HUMANOS   chegaram à ilha de Flores,\n quando o nível do mar estava baixo  "
+    got = chapters_mod.resolve(IDX, messy, word_offset=None)
+    assert got.chapter == 2
+
+
+def test_resolve_ambiguous_uses_word_offset_to_break_the_tie():
+    # Capitulos 1 e 3 tem o mesmo texto. Offset 250 esta mais perto do inicio do 3.
+    got = chapters_mod.resolve(IDX, REPEATED, word_offset=250)
+    assert (got.chapter, got.source) == (3, "exato")
+
+
+def test_resolve_ambiguous_without_offset_takes_the_first():
+    got = chapters_mod.resolve(IDX, REPEATED, word_offset=None)
+    assert (got.chapter, got.source) == (1, "exato")
+
+
+def test_resolve_without_match_estimates_from_offset():
+    got = chapters_mod.resolve(IDX, "texto que nao existe em lugar nenhum do livro", 150)
+    assert (got.chapter, got.source) == (2, "estimado")
+
+
+def test_resolve_beyond_the_end_estimates_the_last_chapter():
+    got = chapters_mod.resolve(IDX, None, word_offset=999999)
+    assert (got.chapter, got.source) == (3, "estimado")
+
+
+def test_resolve_without_excerpt_or_offset_gives_up():
+    assert chapters_mod.resolve(IDX, None, None) is None
+
+
+def test_resolve_prefers_exact_match_over_offset_disagreement():
+    # O trecho manda: offset aproximado nao derruba um casamento inequivoco.
+    got = chapters_mod.resolve(IDX, UNIQUE, word_offset=9999)
+    assert (got.chapter, got.source) == (2, "exato")
+
+
+def test_a_short_excerpt_is_not_trusted():
+    # "o gato" casaria em dois capitulos e nao identifica posicao nenhuma.
+    got = chapters_mod.resolve(IDX, "o gato", word_offset=150)
+    assert got.source == "estimado"
+
+
+def test_width_pads_enough_for_the_chapter_count():
+    assert IDX.width == 2
+    wide = chapters_mod.BookIndex(
+        chapters=[chapters_mod.Chapter(n, str(n), 1, "x") for n in range(1, 120)]
+    )
+    assert wide.width == 3
+
+
+def test_start_of_sums_the_preceding_chapters():
+    assert IDX.start_of(1) == 0
+    assert IDX.start_of(3) == 200
+
+
+def test_build_index_reads_titles_and_counts_words(tmp_path):
+    epub = make_epub_with(
+        tmp_path / "b.epub",
+        [
+            ("c1.xhtml", "<h1>Um</h1><p>tres palavras aqui</p>"),
+            ("c2.xhtml", "<h1>Dois</h1><p>duas palavras</p>"),
+        ],
+    )
+    index = chapters_mod.build_index(epub)
+    assert [c.title for c in index.chapters] == ["Um", "Dois"]
+    assert [c.word_count for c in index.chapters] == [3, 2]
+    assert index.word_count == 5
+
+
+def test_load_index_caches_and_survives_a_corrupt_cache(tmp_path):
+    epub = make_epub_with(
+        tmp_path / "livro.epub", [("c1.xhtml", "<h1>Um</h1><p>texto do capitulo um</p>")]
+    )
+    src = tmp_path / "fonte"
+    first = chapters_mod.load_index(src, "livro", epub)
+    assert first is not None
+    assert chapters_mod.index_cache_path(src, "livro").is_file()
+
+    # Um cache corrompido reconstroi em vez de explodir.
+    chapters_mod.index_cache_path(src, "livro").write_text("{lixo", encoding="utf-8")
+    again = chapters_mod.load_index(src, "livro", epub)
+    assert again is not None
+    assert again.chapters[0].title == "Um"
+
+
+def test_load_index_returns_none_without_an_epub(tmp_path):
+    assert chapters_mod.load_index(tmp_path, "sumido", tmp_path / "sumido.epub") is None
+
+
+def test_load_index_returns_none_for_a_broken_epub(tmp_path):
+    bad = tmp_path / "livro.epub"
+    bad.write_bytes(b"nao sou um zip")
+    # Regra global: conveniencia quebrada nunca pode virar excecao no pipeline.
+    assert chapters_mod.load_index(tmp_path / "fonte", "livro", bad) is None
