@@ -15,7 +15,10 @@ namespace voice {
     namespace {
 
         constexpr char kTag[] = "voice";
-        constexpr uint32_t kStackWords = 6144;
+        // Bytes, not words: xTaskCreate is the ESP-IDF one. This task opens a socket and
+        // streams a file off the card, the same shape of work as the background job,
+        // so it gets the same room.
+        constexpr uint32_t kStackBytes = 12288;
         // Priority 1: above idle so uploads make progress, below the UI so they never
         // cost a frame.
         constexpr UBaseType_t kPriority = 1;
@@ -23,6 +26,10 @@ namespace voice {
         // minutes is often enough to feel automatic and rare enough not to matter to
         // the battery, since an empty queue never wakes the radio.
         constexpr TickType_t kIdleTicks = pdMS_TO_TICKS(5UL * 60UL * 1000UL);
+        // How long to let another radio user finish before giving up on this round.
+        // The startup update check is the one that matters and it resolves in seconds.
+        constexpr uint32_t kRadioWaitMs = 60UL * 1000UL;
+        constexpr uint32_t kRadioPollMs = 500;
 
     } // namespace
 
@@ -40,7 +47,7 @@ namespace voice {
         queue::ensureDir(Board::Storage::filesystem());
         pendingCount_ = queue::pendingCount(Board::Storage::filesystem());
 
-        if (xTaskCreate(&Service::taskEntry, "voice-up", kStackWords, this, kPriority, nullptr) != pdPASS) {
+        if (xTaskCreate(&Service::taskEntry, "voice-up", kStackBytes, this, kPriority, nullptr) != pdPASS) {
             ESP_LOGE(kTag, "could not start the voice upload task");
             return false;
         }
@@ -55,6 +62,10 @@ namespace voice {
         if (wake_ != nullptr) {
             xSemaphoreGive(wake_);
         }
+    }
+
+    void Service::setRadioGate(std::function<bool()> gate) {
+        radioGate_ = std::move(gate);
     }
 
     void Service::setCredentials(const Credentials& credentials) {
@@ -86,8 +97,28 @@ namespace voice {
     void Service::run() {
         for (;;) {
             xSemaphoreTake(wake_, kIdleTicks);
-            flushOnce();
+            if (waitForRadio()) {
+                flushOnce();
+            }
         }
+    }
+
+    // True when the radio is ours to use. False means someone else still holds it
+    // and this round is skipped; the periodic tick comes back to it.
+    bool Service::waitForRadio() {
+        if (!radioGate_) {
+            return true;
+        }
+        for (uint32_t waited = 0; waited < kRadioWaitMs; waited += kRadioPollMs) {
+            if (!radioGate_()) {
+                return true;
+            }
+            vTaskDelay(pdMS_TO_TICKS(kRadioPollMs));
+        }
+        ESP_LOGW(kTag, "radio still busy after %us; skipping this round",
+                 static_cast<unsigned>(kRadioWaitMs / 1000U));
+        lastError_ = "Rede ocupada";
+        return false;
     }
 
     void Service::flushOnce() {
@@ -125,7 +156,11 @@ namespace voice {
         // recorded before the first sync still gets a real timestamp on the next one.
         beginTimeSync();
 
-        const auto endpoint = discoverBridge();
+        // The written address wins: discovery is a convenience, not a source of truth.
+        auto endpoint = configuredBridge(fs);
+        if (!endpoint) {
+            endpoint = discoverBridge();
+        }
         if (!endpoint) {
             net::disconnect();
             busy_ = false;

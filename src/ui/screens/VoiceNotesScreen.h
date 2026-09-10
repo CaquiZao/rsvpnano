@@ -18,8 +18,8 @@ namespace screens {
 
     struct VoiceNotesModel {
         std::vector<VoiceNoteRow> rows;
-        bool busy = false;      // an upload is in flight
-        bool playing = false;   // a note is being played back
+        bool busy = false;    // an upload is in flight
+        bool playing = false; // a note is being played back
         size_t selected = 0;
         const char* error = nullptr;
     };
@@ -28,20 +28,34 @@ namespace screens {
     // without opening a single sidecar.
     std::string labelFromRecordingName(std::string_view name);
 
-    // "17s", "1m20s". Bytes are meaningless to the reader; seconds are what tells one
-    // note from another at a glance.
+    // "17s", "1m20s". Bytes mean nothing to a reader; seconds are what tells one note
+    // from another at a glance.
     std::string formatDuration(uint32_t durationMs);
 
-    // How many rows fit above the pinned buttons. Returned rather than assumed so the
-    // list can never push the controls off the bottom of a 172 px panel.
-    size_t visibleRowCount(int16_t contentHeight, int16_t rowHeight, int16_t reservedHeight);
+    // The strip the list scrolls in: whatever the header and the button row do not
+    // need. The controls are laid out first on purpose. Letting the list take the
+    // space instead is what pushed the back button off the bottom as recordings piled
+    // up, and a screen you cannot leave is worse than one that shows fewer rows.
+    ui::Rect listViewport(const ui::Rect& content);
 
+    // Scrolls by drag, like the chapter list, because that is the gesture this device
+    // already teaches. The rows live inside one redraw-guarded viewport: mixing slot
+    // widgets with raw drawing in a scrolling area corrupts the slot cache and leaves
+    // half-painted buttons behind.
     class VoiceNotesScreen {
     public:
         Action draw(ui::Context& ui, VoiceNotesModel& model, uint32_t nowMs, Screen& screen);
 
     private:
-        size_t firstVisible_ = 0;
+        size_t rowCount_ = 0;
+        size_t dragStartIndex_ = 0;
+        int16_t offset_ = 0;
+        uint16_t lastY_ = 0;
+        uint16_t dragDistance_ = 0;
+        uint32_t lastTickMs_ = 0;
+        int32_t velocity_ = 0;
+        int32_t scrollRemainder_ = 0;
+        bool dragging_ = false;
     };
 
 } // namespace screens

@@ -13,7 +13,8 @@ namespace voice {
     namespace {
 
         constexpr char kTag[] = "voice";
-        constexpr uint32_t kStackWords = 8192;
+        // Bytes, not words.
+        constexpr uint32_t kStackBytes = 8192;
         // The same priority as the Arduino loop task, deliberately. At priority 2 this
         // task preempted the UI outright and the recording screen fell to about one
         // frame a second: it woke on every I2S block and wrote to the card while the
@@ -46,7 +47,7 @@ namespace voice {
         error_ = nullptr;
         active_ = true;
 
-        if (xTaskCreate(&Recorder::taskEntry, "voice-rec", kStackWords, this, kPriority, nullptr) != pdPASS) {
+        if (xTaskCreate(&Recorder::taskEntry, "voice-rec", kStackBytes, this, kPriority, nullptr) != pdPASS) {
             active_ = false;
             error_ = "sem memoria";
             ESP_LOGE(kTag, "could not start the recording task");

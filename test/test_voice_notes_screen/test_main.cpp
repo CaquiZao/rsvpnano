@@ -40,31 +40,36 @@ namespace {
         TEST_ASSERT_EQUAL_STRING("0s", screens::formatDuration(0).c_str());
     }
 
-    // --- quantas linhas cabem -----------------------------------------------
 
-    void test_the_list_gets_whatever_the_controls_do_not_need() {
-        TEST_ASSERT_EQUAL_UINT32(4, screens::visibleRowCount(200, 26, 96));
-    }
+    // --- a faixa que a lista recebe -----------------------------------------
 
-    void test_side_by_side_controls_leave_room_for_several_notes() {
-        // The real geometry: a 148 px content area with one row of buttons reserving
-        // 52 px. Stacked buttons reserved 122 px and left room for a single note, which
-        // is what made the screen look broken.
-        TEST_ASSERT_EQUAL_UINT32(4, screens::visibleRowCount(148, 24, 52));
-    }
-
-    void test_a_short_panel_shows_no_rows_rather_than_hiding_the_buttons() {
+    void test_the_list_stops_above_the_button_row() {
         // The complaint that prompted this: the back button was being pushed off the
-        // bottom as recordings piled up. The controls win, always.
-        TEST_ASSERT_EQUAL_UINT32(0, screens::visibleRowCount(100, 26, 96));
+        // bottom as recordings piled up. The controls are placed first, always.
+        const ui::Rect view = screens::listViewport({0, 0, 320, 148});
+        TEST_ASSERT_TRUE(view.y + view.h < 148);
     }
 
-    void test_exactly_one_row_fits_when_there_is_room_for_exactly_one() {
-        TEST_ASSERT_EQUAL_UINT32(1, screens::visibleRowCount(122, 26, 96));
+    void test_the_list_starts_below_the_header() {
+        const ui::Rect view = screens::listViewport({0, 0, 320, 148});
+        TEST_ASSERT_TRUE(view.y >= 26);
     }
 
-    void test_a_zero_row_height_does_not_divide_by_zero() {
-        TEST_ASSERT_EQUAL_UINT32(0, screens::visibleRowCount(200, 0, 96));
+    void test_a_panel_too_short_for_both_gives_the_list_nothing() {
+        // Zero rows is a readable screen. A negative height goes straight to fillRect.
+        TEST_ASSERT_EQUAL_INT16(0, screens::listViewport({0, 0, 320, 40}).h);
+    }
+
+    void test_the_viewport_never_has_negative_height() {
+        for (int16_t height = 0; height < 200; ++height) {
+            TEST_ASSERT_TRUE(screens::listViewport({0, 0, 320, height}).h >= 0);
+        }
+    }
+
+    void test_the_viewport_keeps_the_full_width_and_origin() {
+        const ui::Rect view = screens::listViewport({7, 3, 320, 148});
+        TEST_ASSERT_EQUAL_INT16(7, view.x);
+        TEST_ASSERT_EQUAL_INT16(320, view.w);
     }
 
 } // namespace
@@ -78,10 +83,10 @@ int main(int, char**) {
     RUN_TEST(test_a_long_note_reads_in_minutes_and_seconds);
     RUN_TEST(test_a_note_just_under_a_minute_stays_in_seconds);
     RUN_TEST(test_an_empty_recording_is_zero_not_blank);
-    RUN_TEST(test_the_list_gets_whatever_the_controls_do_not_need);
-    RUN_TEST(test_side_by_side_controls_leave_room_for_several_notes);
-    RUN_TEST(test_a_short_panel_shows_no_rows_rather_than_hiding_the_buttons);
-    RUN_TEST(test_exactly_one_row_fits_when_there_is_room_for_exactly_one);
-    RUN_TEST(test_a_zero_row_height_does_not_divide_by_zero);
+    RUN_TEST(test_the_list_stops_above_the_button_row);
+    RUN_TEST(test_the_list_starts_below_the_header);
+    RUN_TEST(test_a_panel_too_short_for_both_gives_the_list_nothing);
+    RUN_TEST(test_the_viewport_never_has_negative_height);
+    RUN_TEST(test_the_viewport_keeps_the_full_width_and_origin);
     return UNITY_END();
 }

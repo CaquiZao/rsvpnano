@@ -14,7 +14,8 @@ namespace voice {
     namespace {
 
         constexpr char kTag[] = "voice";
-        constexpr uint32_t kStackWords = 6144;
+        // Bytes, not words. Two chunk buffers already claim 3 KB of this.
+        constexpr uint32_t kStackBytes = 8192;
         // Same priority as the UI, for the same reason the recorder is: preempting the
         // draw loop outright is what made the recording screen look frozen.
         constexpr UBaseType_t kPriority = 1;
@@ -36,7 +37,7 @@ namespace voice {
         error_ = nullptr;
         active_ = true;
 
-        if (xTaskCreate(&Player::taskEntry, "voice-play", kStackWords, this, kPriority, nullptr) != pdPASS) {
+        if (xTaskCreate(&Player::taskEntry, "voice-play", kStackBytes, this, kPriority, nullptr) != pdPASS) {
             active_ = false;
             error_ = "sem memoria";
             return false;

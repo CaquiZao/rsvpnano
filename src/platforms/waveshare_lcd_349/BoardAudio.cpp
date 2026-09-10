@@ -65,8 +65,11 @@ namespace Board::Audio {
     }
 
     bool writeSamples(const int16_t* samples, size_t sampleCount, uint32_t timeoutMs) {
-        // Playback needs the DAC path up; capture may have been the last thing to run.
-        if (!BoardPlatform::Es8311BoardAudio::available(gAudioContext)
+        // begin() powers the rail and brings the codec up; available() only reports
+        // whether that already happened. Checking instead of doing meant playback
+        // refused every note on a board that had not recorded since boot, and reported
+        // it as zero milliseconds played.
+        if (!BoardPlatform::Es8311BoardAudio::begin(gAudioContext)
             || !BoardDrivers::Es8311::prepareOutput(gAudioContext)) {
             return false;
         }

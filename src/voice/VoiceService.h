@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 #include "freertos/FreeRTOS.h"
@@ -29,6 +30,11 @@ namespace voice {
         // the settings store is not this task's to read.
         void setCredentials(const Credentials& credentials);
 
+        // Answers "is someone else using the radio right now". The update check
+        // brings Wi-Fi up at boot and takes it down when it finishes, which killed an
+        // upload mid-body. Waiting for it costs seconds; racing it costs the note.
+        void setRadioGate(std::function<bool()> gate);
+
         // For the indicator in the reader. Cached, because counting means listing a
         // directory and the UI asks every frame.
         size_t pendingCount() const;
@@ -39,11 +45,13 @@ namespace voice {
     private:
         static void taskEntry(void* self);
         void run();
+        bool waitForRadio();
         void flushOnce();
 
         SemaphoreHandle_t wake_ = nullptr;
         SemaphoreHandle_t lock_ = nullptr;
         Credentials credentials_;
+        std::function<bool()> radioGate_;
         volatile size_t pendingCount_ = 0;
         volatile bool busy_ = false;
         const char* lastError_ = nullptr;

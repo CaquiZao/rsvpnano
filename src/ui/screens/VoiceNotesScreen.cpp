@@ -1,7 +1,9 @@
 #include "ui/screens/VoiceNotesScreen.h"
 
 #include <algorithm>
+#include <climits>
 #include <cstdio>
+#include <cstdlib>
 
 #include "ui/screens/ScreenCommon.h"
 
@@ -9,14 +11,14 @@ namespace screens {
 
     namespace {
 
-        constexpr int16_t kRowHeight = 24;
+        constexpr int16_t kHeaderHeight = 26;
         constexpr int16_t kButtonHeight = 30;
         constexpr int16_t kGap = 4;
-        // One row of three buttons plus the line that reports the last upload error.
-        // Stacked, those buttons took 122 px of a 148 px content area and left room for
-        // exactly one note. This panel is 640 wide and 172 tall: width is what there is
-        // plenty of, so the controls go side by side.
-        constexpr int16_t kReservedHeight = kButtonHeight + kGap + 18;
+        constexpr int16_t kRowStep = 26;
+        constexpr int16_t kDragThreshold = 5;
+        constexpr int32_t kMaximumVelocity = 400'000;
+        constexpr uint32_t kAccelerationMs = 450;
+        constexpr int32_t kScrollScale = 1'000'000;
 
         bool allDigits(std::string_view text) {
             return std::all_of(text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; });
@@ -61,77 +63,188 @@ namespace screens {
         return buffer;
     }
 
-    size_t visibleRowCount(int16_t contentHeight, int16_t rowHeight, int16_t reservedHeight) {
-        if (rowHeight <= 0) {
-            return 0;
-        }
-        const int16_t forList = static_cast<int16_t>(contentHeight - reservedHeight);
-        if (forList < rowHeight) {
-            // The controls always win. A list that pushes the back button off the panel
-            // strands the user on this screen.
-            return 0;
-        }
-        return static_cast<size_t>(forList / rowHeight);
+    ui::Rect listViewport(const ui::Rect& content) {
+        const int16_t buttonsTop = static_cast<int16_t>(content.y + content.h - kButtonHeight);
+        const int16_t top = static_cast<int16_t>(content.y + kHeaderHeight + kGap);
+        // Clamped at zero: on a panel too short for both, the buttons win and the list
+        // gets nothing. A negative height would be handed straight to fillRect.
+        const int16_t height = static_cast<int16_t>(std::max(0, buttonsTop - top - kGap));
+        return {content.x, top, content.w, height};
     }
 
-    Action VoiceNotesScreen::draw(ui::Context& ui, VoiceNotesModel& model, uint32_t, Screen& screen) {
+    Action VoiceNotesScreen::draw(ui::Context& ui, VoiceNotesModel& model, uint32_t nowMs, Screen& screen) {
         const ui::Rect content = detail::content(ui);
-        const size_t capacity = visibleRowCount(content.h, kRowHeight, kReservedHeight);
 
-        // Keep the selection on screen, scrolling by whole rows.
-        if (model.selected < firstVisible_) {
-            firstVisible_ = model.selected;
-        } else if (capacity > 0 && model.selected >= firstVisible_ + capacity) {
-            firstVisible_ = model.selected - capacity + 1;
-        }
-        if (firstVisible_ > model.rows.size()) {
-            firstVisible_ = 0;
+        // A changed list invalidates any scroll position built against the old one.
+        if (rowCount_ != model.rows.size()) {
+            rowCount_ = model.rows.size();
+            offset_ = 0;
+            dragging_ = false;
+            velocity_ = 0;
+            scrollRemainder_ = 0;
         }
 
-        ui::Column list{content, kGap, 0};
+        char position[32] = {};
+        std::snprintf(position, sizeof(position), "%u / %u",
+                      static_cast<unsigned>(model.rows.empty() ? 0 : model.selected + 1),
+                      static_cast<unsigned>(model.rows.size()));
+        ui.label({content.x, content.y, static_cast<int16_t>(content.w - 90), kHeaderHeight},
+                 model.error != nullptr ? model.error : "Notas de voz", 2,
+                 model.error != nullptr ? ui::themes::ColorRole::Accent : ui::themes::ColorRole::Foreground,
+                 ui::TextAlign::Start);
+        ui.label({static_cast<int16_t>(content.x + content.w - 90), content.y, 90, kHeaderHeight}, position, 1,
+                 ui::themes::ColorRole::Muted, ui::TextAlign::Right);
 
-        if (model.rows.empty()) {
-            // An empty screen with no words reads as a fault. Say it is empty.
-            ui.label(list.next(28), "Nenhuma nota pendente", 2, ui::themes::ColorRole::Foreground,
-                     ui::TextAlign::Center);
-            ui.label(list.next(24), "Duplo clique no BOOT durante a leitura", 1, ui::themes::ColorRole::Muted,
-                     ui::TextAlign::Center, 2);
-        } else {
-            const size_t last = std::min(model.rows.size(), firstVisible_ + capacity);
-            for (size_t index = firstVisible_; index < last; ++index) {
-                const auto& row = model.rows[index];
-                const ui::Rect rect = list.next(kRowHeight);
-                if (ui.setting(rect, row.label, row.detail, ui::SettingLayout::Inline)) {
-                    model.selected = index;
+        // The controls own the bottom strip; the list gets what is left. On a 172 px
+        // panel that ordering is the difference between four notes and one.
+        const int16_t buttonsTop = static_cast<int16_t>(content.y + content.h - kButtonHeight);
+        const ui::Rect viewport = listViewport(content);
+
+        const ui::Touch* touch = ui.touch();
+        if (!model.rows.empty() && viewport.h >= kRowStep) {
+            if (touch != nullptr && ui::hasTouch(*touch, ui::TouchStart)
+                && ui::contains(viewport, touch->x, touch->y)) {
+                dragging_ = true;
+                dragStartIndex_ = model.selected;
+                lastY_ = touch->y;
+                dragDistance_ = 0;
+                lastTickMs_ = nowMs;
+                velocity_ = 0;
+                scrollRemainder_ = 0;
+            }
+            if (dragging_ && touch != nullptr && ui::hasTouch(*touch, ui::TouchMove)) {
+                const int16_t delta = static_cast<int16_t>(touch->y) - static_cast<int16_t>(lastY_);
+                dragDistance_ = static_cast<uint16_t>(std::min<int>(UINT16_MAX, dragDistance_ + std::abs(delta)));
+                lastY_ = touch->y;
+            }
+
+            // A tap that never turned into a drag picks the row under the finger.
+            if (dragging_ && touch != nullptr && ui::hasTouch(*touch, ui::TouchRelease)
+                && ui::hasTouch(*touch, ui::TouchTap) && ui::contains(viewport, touch->x, touch->y)) {
+                dragging_ = false;
+                offset_ = 0;
+                velocity_ = 0;
+                scrollRemainder_ = 0;
+                model.selected = dragStartIndex_;
+
+                const int16_t centreY = static_cast<int16_t>(viewport.y + viewport.h / 2);
+                const int rows = viewport.h / kRowStep;
+                const size_t half = static_cast<size_t>(std::max(1, rows / 2));
+                const size_t first = model.selected > half ? model.selected - half : 0;
+                const size_t last = std::min(model.rows.size(), model.selected + half + 1);
+                size_t tapped = model.selected;
+                int closest = INT_MAX;
+                for (size_t index = first; index < last; ++index) {
+                    const int rowY =
+                        centreY + (static_cast<int>(index) - static_cast<int>(model.selected)) * kRowStep;
+                    const int distance = std::abs(rowY - touch->y);
+                    if (distance < closest) {
+                        closest = distance;
+                        tapped = index;
+                    }
                 }
-                if (index == model.selected) {
-                    // A rule under the selected row: the play and send buttons act on it,
-                    // so which one they mean has to be unambiguous.
-                    ui.gfx().fillRect(rect.x, static_cast<int16_t>(rect.y + rect.h - 2), rect.w, 2,
-                                      ui.color(ui::themes::ColorRole::Accent));
-                    ui.markDrawn();
+                model.selected = tapped;
+            }
+
+            if (dragging_) {
+                const uint32_t elapsed = std::min<uint32_t>(nowMs - lastTickMs_, 100);
+                lastTickMs_ = nowMs;
+                const int32_t dragRate =
+                    ui::centeredDragRate(lastY_, viewport.y, viewport.h, kRowStep / 2, kMaximumVelocity);
+                if (dragDistance_ > kDragThreshold && dragRate != 0) {
+                    // Finger below the middle scrolls forward, above it scrolls back:
+                    // the same gesture the chapter list already teaches.
+                    const int32_t target = -dragRate;
+                    velocity_ +=
+                        static_cast<int32_t>(static_cast<int64_t>(target - velocity_) * elapsed / kAccelerationMs);
+                    scrollRemainder_ += static_cast<int32_t>(static_cast<int64_t>(velocity_) * elapsed);
+                    offset_ = static_cast<int16_t>(offset_ + scrollRemainder_ / kScrollScale);
+                    scrollRemainder_ %= kScrollScale;
+                } else {
+                    velocity_ = 0;
+                    scrollRemainder_ = 0;
+                    if (dragDistance_ > kDragThreshold) {
+                        offset_ = 0;
+                    }
                 }
             }
-            if (model.rows.size() > capacity) {
-                char position[40] = {};
-                std::snprintf(position, sizeof(position), "%u de %u",
-                              static_cast<unsigned>(model.selected + 1),
-                              static_cast<unsigned>(model.rows.size()));
-                ui.label(list.next(18), position, 1, ui::themes::ColorRole::Muted, ui::TextAlign::Right);
+
+            while (offset_ <= -kRowStep / 2 && model.selected + 1 < model.rows.size()) {
+                ++model.selected;
+                offset_ = static_cast<int16_t>(offset_ + kRowStep);
+            }
+            while (offset_ >= kRowStep / 2 && model.selected > 0) {
+                --model.selected;
+                offset_ = static_cast<int16_t>(offset_ - kRowStep);
+            }
+            if (model.selected == 0) {
+                offset_ = std::min<int16_t>(offset_, 0);
+            }
+            if (model.selected + 1 == model.rows.size()) {
+                offset_ = std::max<int16_t>(offset_, 0);
+            }
+
+            if (dragging_ && touch != nullptr && ui::hasTouch(*touch, ui::TouchRelease)) {
+                dragging_ = false;
+                offset_ = 0;
+                velocity_ = 0;
+                scrollRemainder_ = 0;
             }
         }
 
-        // The controls are pinned to the bottom of the content area rather than flowing
-        // after the list, so however long the list grows it cannot reach them.
-        const int16_t controlsTop = static_cast<int16_t>(content.y + content.h - kReservedHeight);
-
-        if (model.error != nullptr) {
-            ui.label({content.x, controlsTop, content.w, 18}, model.error, 1, ui::themes::ColorRole::Accent,
-                     ui::TextAlign::Center);
+        // One redraw guard over the whole scrolling area. Slot widgets must not live in
+        // here: mixing them with raw drawing is what left the buttons half painted.
+        uint32_t state = ui::Context::combine(static_cast<uint32_t>(model.rows.size()), model.selected);
+        state = ui::Context::combine(state, static_cast<uint16_t>(offset_));
+        state = ui::Context::combine(state, model.playing ? 1U : 0U);
+        for (const auto& row : model.rows) {
+            state = ui::Context::signature(row.label, ui::Context::combine(state, 0));
         }
 
-        ui::Row buttons{{content.x, static_cast<int16_t>(controlsTop + 18 + kGap), content.w, kButtonHeight},
-                        kGap, 0};
+        if (ui.redraw(viewport, state)) {
+            Arduino_GFX& gfx = ui.gfx();
+            gfx.fillRect(viewport.x, viewport.y, viewport.w, viewport.h,
+                         ui.color(ui::themes::ColorRole::Background));
+
+            if (model.rows.empty()) {
+                // An empty screen with no words reads as a fault. Say it is empty.
+                ui.drawText(viewport, "Nenhuma nota pendente. Duplo clique no BOOT lendo.", 2,
+                            ui.color(ui::themes::ColorRole::Muted), ui::TextAlign::Center, 2);
+            } else {
+                const int16_t centreY = static_cast<int16_t>(viewport.y + viewport.h / 2);
+                const int rows = std::max(1, viewport.h / kRowStep);
+                const size_t half = static_cast<size_t>(rows / 2 + 1);
+                const size_t first = model.selected > half ? model.selected - half : 0;
+                const size_t last = std::min(model.rows.size(), model.selected + half + 1);
+
+                for (size_t index = first; index < last; ++index) {
+                    const int16_t y = static_cast<int16_t>(
+                        centreY + (static_cast<int>(index) - static_cast<int>(model.selected)) * kRowStep + offset_);
+                    const int16_t top = static_cast<int16_t>(y - kRowStep / 2);
+                    if (top < viewport.y || top + kRowStep > viewport.y + viewport.h) {
+                        continue;
+                    }
+                    const bool current = index == model.selected;
+                    const ui::Rect rect{static_cast<int16_t>(viewport.x + 4), top,
+                                        static_cast<int16_t>(viewport.w - 8),
+                                        static_cast<int16_t>(kRowStep - 2)};
+                    gfx.fillRoundRect(rect.x, rect.y, rect.w, rect.h, 5,
+                                      ui.color(current ? ui::themes::ColorRole::SurfaceActive
+                                                       : ui::themes::ColorRole::SurfaceMuted));
+                    ui.drawText({static_cast<int16_t>(rect.x + 8), rect.y,
+                                 static_cast<int16_t>(rect.w - 100), rect.h},
+                                model.rows[index].label, 2,
+                                ui.color(current ? ui::themes::ColorRole::Foreground
+                                                 : ui::themes::ColorRole::Muted),
+                                ui::TextAlign::Start);
+                    ui.drawText({static_cast<int16_t>(rect.x + rect.w - 96), rect.y, 88, rect.h},
+                                model.rows[index].detail, 1, ui.color(ui::themes::ColorRole::Muted),
+                                ui::TextAlign::Right);
+                }
+            }
+        }
+
+        ui::Row buttons{{content.x, buttonsTop, content.w, kButtonHeight}, kGap, 0};
         const int16_t buttonWidth = static_cast<int16_t>((content.w - 2 * kGap) / 3);
 
         Action result = Action::None;

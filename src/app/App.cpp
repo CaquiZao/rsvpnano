@@ -100,10 +100,20 @@ void App::begin() {
     Logger::startupCheckpoint("book");
     libraryScreen_.invalidate();
     ESP_LOGI("startup", "ready");
+    {
+        // Which buttons are held the moment the app comes up. A stuck PWR reads as a
+        // long press and shuts the device down on its own, seconds after every boot.
+        const ::Input::PressActions held = Board::Input::currentActions();
+        ESP_LOGW("startup", "reset_reason=%d held: power=%d primary=%d",
+                 static_cast<int>(esp_reset_reason()),
+                 ::Input::hasAction(held.longPress, ::Input::ActionPowerOff) ? 1 : 0,
+                 ::Input::hasAction(held.longPress, ::Input::ActionStandby) ? 1 : 0);
+    }
 
     // Voice notes: the queue is drained in the background, so a note recorded with
     // the network down still lands in the vault later.
     voiceService_.setCredentials({settingsStore_.settings().network.ssid, settingsStore_.secrets().wifiPassword});
+    voiceService_.setRadioGate([this] { return backgroundJobActive(); });
     voiceService_.begin();
 }
 
@@ -152,7 +162,7 @@ void App::update(uint32_t nowMs) {
 
     if (screen_ == screens::Screen::Standby) {
         if (nowMs - standbyEnteredMs_ >= kStandbyPowerOffMs) {
-            powerOff(nowMs);
+            powerOff(nowMs, "standby timeout");
             return;
         }
         standbyScreen_.update(immediateUi_, nowMs);
@@ -389,7 +399,7 @@ void App::handleScreenAction(screens::Action action, uint32_t nowMs) {
         renderScreen(nowMs);
         return;
     case screens::Action::PowerOff:
-        powerOff(nowMs);
+        powerOff(nowMs, "menu Action::PowerOff");
         return;
     case screens::Action::CompanionSync:
         screen_ = screens::Screen::Sync;
@@ -507,7 +517,7 @@ void App::handleInput(Input::ActionMask actions, uint32_t nowMs) {
         return;
     }
     if (Input::hasAction(actions, Input::ActionPowerOff)) {
-        powerOff(nowMs);
+        powerOff(nowMs, "PWR long press");
         return;
     }
     if (Input::hasAction(actions, Input::ActionStandby)) {
@@ -586,6 +596,13 @@ void App::updateVoice(uint32_t nowMs) {
     if (screen_ == screens::Screen::Reader && !typographyJobActive()
         && voiceClick_.tick(nowMs) == voice::DoubleClick::Verdict::Single) {
         readerScreen_.toggle(prefs_, nowMs);
+    }
+    if (screen_ == screens::Screen::VoiceNotes) {
+        // The list scrolls under the finger and the play button changes label while a
+        // note is heard, so this screen has to keep drawing rather than only redrawing
+        // on an action.
+        renderScreen(nowMs);
+        return;
     }
     if (screen_ == screens::Screen::VoiceRecord) {
         voiceClick_.tick(nowMs); // Drain, so a stray press cannot fire later.
@@ -1110,14 +1127,14 @@ void App::lightSleepFromStandby() {
         const uint32_t elapsedMs = millis() - sleepStartedAtMs;
         if (elapsedMs >= kStandbyPowerOffMs) {
             ESP_LOGI("app", "screen-off standby expired; powering off");
-            powerOff(millis());
+            powerOff(millis(), "standby light-sleep elapsed");
             return;
         }
 
         switch (Board::System::lightSleep(kStandbyPowerOffMs - elapsedMs)) {
         case EspLightSleep::WakeReason::timer:
             ESP_LOGI("app", "screen-off standby expired; powering off");
-            powerOff(millis());
+            powerOff(millis(), "standby light-sleep timer");
             return;
         case EspLightSleep::WakeReason::input:
             if constexpr (Board::Config::HAS_LIGHT_SLEEP_TOUCH_IRQ) {
@@ -1150,7 +1167,10 @@ void App::lightSleepFromStandby() {
     }
 }
 
-void App::powerOff(uint32_t nowMs) {
+void App::powerOff(uint32_t nowMs, const char* reason) {
+    // Diagnostic: the board was shutting itself down seconds after boot and the log
+    // gave no way to tell which of the five paths had asked for it.
+    ESP_LOGW("power", "powering off: %s", reason);
     if (companionApi_.active())
         companionApi_.end();
     if (screen_ == screens::Screen::FocusSession)

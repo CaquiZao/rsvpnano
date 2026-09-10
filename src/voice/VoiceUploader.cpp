@@ -6,6 +6,8 @@
 #include <esp_log.h>
 
 #include <array>
+#include <cstdlib>
+#include <vector>
 
 #include "voice/VoiceUploadBody.h"
 
@@ -18,6 +20,10 @@ namespace voice {
         // What discovery.py publishes as the server name, and the port it binds.
         constexpr char kHostname[] = "handy-bridge";
         constexpr uint16_t kDefaultPort = 8787;
+        // An explicit address, one line, edited over USB transfer. Routers routinely
+        // forward unicast between their bands while dropping multicast, which leaves
+        // mDNS unable to find a bridge the device can reach perfectly well.
+        constexpr char kConfigPath[] = "/config/bridge.txt";
         constexpr char kPath[] = "/v1/notes";
         constexpr uint32_t kConnectTimeoutMs = 4000;
         // The bridge answers before transcribing, so it should reply in well under a
@@ -65,6 +71,39 @@ namespace voice {
         }
 
     } // namespace
+
+    std::optional<Endpoint> configuredBridge(fs::FS& fs) {
+        File file = fs.open(kConfigPath);
+        if (!file) {
+            return std::nullopt;
+        }
+        std::string text;
+        text.resize(std::min<size_t>(file.size(), 64));
+        file.read(reinterpret_cast<uint8_t*>(text.data()), text.size());
+        file.close();
+
+        // "host" or "host:port", trailing whitespace tolerated because this file is
+        // meant to be edited by hand over USB transfer.
+        while (!text.empty()
+               && (text.back() == '\n' || text.back() == '\r'
+                   || text.back() == ' ' || text.back() == '\0')) {
+            text.pop_back();
+        }
+        if (text.empty()) {
+            return std::nullopt;
+        }
+        Endpoint endpoint{text, kDefaultPort};
+        if (const size_t colon = text.find_last_of(':'); colon != std::string::npos) {
+            endpoint.host = text.substr(0, colon);
+            endpoint.port = static_cast<uint16_t>(atoi(text.c_str() + colon + 1));
+        }
+        if (endpoint.host.empty() || endpoint.port == 0) {
+            return std::nullopt;
+        }
+        ESP_LOGI(kTag, "bridge configured at %s:%u", endpoint.host.c_str(),
+                 static_cast<unsigned>(endpoint.port));
+        return endpoint;
+    }
 
     std::optional<Endpoint> discoverBridge(uint32_t timeoutMs) {
         if (WiFi.status() != WL_CONNECTED) {
@@ -150,7 +189,9 @@ namespace voice {
 
         // Streamed in 4 KB chunks. Building the body in RAM would need 19 MB for a ten
         // minute note, and the PSRAM has other jobs.
-        std::array<uint8_t, kChunkBytes> chunk{};
+        // On the heap on purpose: 4 KB of stack inside a task that is also down in
+        // lwIP is what overflowed and panicked the board on every boot.
+        std::vector<uint8_t> chunk(kChunkBytes);
         size_t sent = 0;
         while (sent < audioBytes) {
             const size_t read = audio.read(chunk.data(), chunk.size());
