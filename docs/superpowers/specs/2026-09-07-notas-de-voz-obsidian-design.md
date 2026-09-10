@@ -258,6 +258,48 @@ sem migrar codec e periférico para TDM produz **silêncio exato** — medido, n
 O `enum MicPair` existe para a escolha ficar explícita, não porque as duas opções
 funcionem hoje.
 
+## 3.9 Armadilhas de plataforma que custaram uma noite
+
+### `xTaskCreate` conta bytes, não palavras
+
+No FreeRTOS original o terceiro parâmetro é o tamanho da pilha **em palavras**; no
+ESP-IDF é **em bytes**. O restante deste projeto já diz isso no nome
+(`kJobStackBytes`, `kSamplerStackBytes`) — as três tasks de voz nasceram com
+`kStackWords` e foram dimensionadas como se fossem palavras, ou seja com **um quarto**
+da pilha pretendida.
+
+O sintoma não foi um estouro imediato: a task de envio (6 KB reais) só quebrava quando
+o upload alocava seu buffer de 4 KB **na pilha**, e isso só acontecia quando o Wi-Fi
+realmente associava. Resultado: `reset_reason=4` (panic) em laço infinito, porque a
+nota permanecia na fila e a tentativa se repetia a cada boot. Nenhum backtrace chegava
+ao console — o USB CDC morre no panic antes de transmitir.
+
+**Lição:** buffers de kilobytes vão para o heap, e o tamanho de pilha entra no nome da
+constante. Se um crash só aparece quando a rede sobe, suspeite da pilha da task que usa
+a rede, não da rede.
+
+### Gravar `firmware.factory.bin` em `0x0` apaga a NVS
+
+A imagem combinada é contígua de `0x0` até o fim do app e preenche os buracos com
+`0xFF`. No layout `default_16MB.csv` a NVS mora em `0x9000..0xE000`, bem no meio —
+gravá-la destrói as preferências: senha do Wi-Fi, tema, fonte, último livro. O sintoma
+é `nvs_open failed: NOT_FOUND` para `settings` e `secrets` logo no boot seguinte.
+
+**Para atualizar o firmware preservando as configurações**, grave só o app:
+
+```
+esptool --chip esp32s3 --port COMx --before default-reset --after hard-reset         write-flash 0x10000 .pio/build/<env>/firmware.bin
+```
+
+O `factory.bin` em `0x0` é para a primeira gravação de uma placa virgem.
+
+### O rádio tem mais de um dono
+
+A verificação de atualização do boot sobe o Wi-Fi e o **derruba ao terminar**. Um
+upload em andamento morre com `errno 113` no meio do corpo. `VoiceService` espera pelo
+gate `backgroundJobActive()` em vez de disputar; `jobKind_` é `volatile` porque é
+escrito pela loop task e lido pela task de envio.
+
 ## 4. Arquitetura
 
 ```
