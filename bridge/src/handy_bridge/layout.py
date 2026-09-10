@@ -13,19 +13,28 @@ the ability to find a book's existing notes.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 
+from handy_bridge.kind import DEFAULT_KIND
 from handy_bridge.note import slugify
 
 BOOKS_DIR = "Livros"
 GENERAL_DIR = "Geral"
-NOTES_DIR = "Notas"
 CHAPTERS_DIR = "Capítulos"
+
+# One directory per kind, so opening the vault and reading one kind of note is a
+# click in the file explorer rather than a query. The cost is that a chapter's
+# notes no longer sit together in reading order — the chapter summary is where
+# that view lives now.
+KIND_DIRS: dict[str, str] = {
+    "anotação": "Anotações",
+    "pergunta": "Perguntas",
+    "recall": "Recall",
+}
 SOURCE_DIR = "fonte"
 BOARD_FILE = "Quadro.md"
 
-# Wide enough for any book: Sapiens alone counts 147k words.
-OFFSET_DIGITS = 6
 MIN_CHAPTER_DIGITS = 2
 
 
@@ -50,8 +59,30 @@ def book_dir(vault_path: Path, book_stem: str | None) -> Path:
     return Path(vault_path) / BOOKS_DIR / stem
 
 
-def notes_dir(vault_path: Path, book_stem: str | None) -> Path:
-    return book_dir(vault_path, book_stem) / NOTES_DIR
+def notes_dir(vault_path: Path, book_stem: str | None, kind: str = DEFAULT_KIND) -> Path:
+    """Where a note of this kind lives. An unknown kind falls back to the default."""
+    folder = KIND_DIRS.get(kind) or KIND_DIRS[DEFAULT_KIND]
+    return book_dir(vault_path, book_stem) / folder
+
+
+def all_notes_dirs(vault_path: Path, book_stem: str | None) -> list[Path]:
+    """Every kind directory, for callers that need a book's notes as a whole."""
+    root = book_dir(vault_path, book_stem)
+    return [root / folder for folder in KIND_DIRS.values()]
+
+
+def ensure_kind_dirs(vault_path: Path, book_stem: str | None) -> list[Path]:
+    """Create all three kind directories, even the ones still empty.
+
+    When the kind axis was a query, an absent kind simply returned no rows. As
+    directories, an absent one is invisible: opening a book and seeing no `Recall`
+    leaves nowhere obvious for a recall to land. Creating them up front makes the
+    layout explain itself.
+    """
+    dirs = all_notes_dirs(vault_path, book_stem)
+    for folder in dirs:
+        folder.mkdir(parents=True, exist_ok=True)
+    return dirs
 
 
 def chapters_dir(vault_path: Path, book_stem: str | None) -> Path:
@@ -71,20 +102,17 @@ def book_summary_path(vault_path: Path, book_stem: str | None) -> Path:
     return book_dir(vault_path, book_stem) / f"{slugify(stem)}.md"
 
 
-def note_stem(
-    chapter: int | None, word_offset: int | None, title: str, width: int
-) -> str:
-    """Name a note by where it sits in the book, not by when it was recorded.
+def note_stem(recorded_at: datetime, title: str) -> str:
+    """Name a note by when it was recorded, in a form that reads as a date.
 
-    Reading order is not recording order: re-reading chapter 2 after chapter 8 has
-    to put the note back at chapter 2. The date stays in the frontmatter, where the
-    Bases views can still sort by it.
+    An earlier version encoded chapter and word offset here, so a directory listing
+    came out in reading order. That mattered while every note shared one directory;
+    once the notes split by kind, the chapter summary became the place where a
+    chapter's notes sit together in reading order, and the filename was left
+    carrying a code nobody reads. Position lives in the frontmatter, which is where
+    the summaries take it from.
     """
-    number = str(chapter if chapter is not None else 0).zfill(
-        max(MIN_CHAPTER_DIGITS, width)
-    )
-    offset = str(word_offset if word_offset is not None else 0).zfill(OFFSET_DIGITS)
-    return f"{number}-{offset} {slugify(title)}"
+    return f"{recorded_at:%Y-%m-%d %H%M} - {slugify(title)}"
 
 
 def chapter_summary_path(

@@ -75,10 +75,10 @@ def test_migration_moves_notes_into_the_book_layout(tmp_path):
     vault = legacy_vault(tmp_path)
     migrate.apply_migration(vault, dry_run=False)
 
-    notes = list((vault / "Livros" / "livro" / "Notas").glob("*.md"))
+    notes = list((vault / "Livros" / "livro" / "Anotações").glob("*.md"))
     assert len(notes) == 1
     # Renomeada para a posicao de leitura, com o capitulo resolvido pelo trecho.
-    assert notes[0].name == "02-001324 Crítica à tese.md"
+    assert notes[0].name == "2026-09-08 1205 - Crítica à tese.md"
     assert (vault / "Livros" / "livro" / "Quadro.md").is_file()
     assert (vault / "Livros" / "livro" / "fonte" / "livro.epub").is_file()
     assert (vault / "Livros" / "livro" / "fonte" / "livro.md").is_file()
@@ -87,7 +87,7 @@ def test_migration_moves_notes_into_the_book_layout(tmp_path):
 def test_migration_fills_in_the_new_frontmatter(tmp_path):
     vault = legacy_vault(tmp_path)
     migrate.apply_migration(vault, dry_run=False)
-    text = next((vault / "Livros" / "livro" / "Notas").glob("*.md")).read_text(
+    text = next((vault / "Livros" / "livro" / "Anotações").glob("*.md")).read_text(
         encoding="utf-8"
     )
     assert "kind: anotação" in text
@@ -109,7 +109,7 @@ def test_a_note_with_answered_questions_is_classified_as_a_question(tmp_path):
     )
     vault = legacy_vault(tmp_path, notes={"nota.md": with_question})
     migrate.apply_migration(vault, dry_run=False)
-    text = next((vault / "Livros" / "livro" / "Notas").glob("*.md")).read_text(
+    text = next((vault / "Livros" / "livro" / "Perguntas").glob("*.md")).read_text(
         encoding="utf-8"
     )
     assert "kind: pergunta" in text
@@ -119,7 +119,7 @@ def test_a_spoken_recall_marker_in_the_old_transcript_still_wins(tmp_path):
     spoken = NOTE.replace("> transcricao literal aqui", "> recapitulando, foi assim")
     vault = legacy_vault(tmp_path, notes={"nota.md": spoken})
     migrate.apply_migration(vault, dry_run=False)
-    text = next((vault / "Livros" / "livro" / "Notas").glob("*.md")).read_text(
+    text = next((vault / "Livros" / "livro" / "Recall").glob("*.md")).read_text(
         encoding="utf-8"
     )
     assert "kind: recall" in text
@@ -134,12 +134,33 @@ def test_migration_dedupes_identical_cards_keeping_the_checked_one(tmp_path):
     assert "- [x] Entender o Big Bang" in board
 
 
-def test_migration_rewrites_card_links_to_the_renamed_notes(tmp_path):
+def test_migration_keeps_every_card_pointing_at_a_note_that_exists(tmp_path):
+    # O invariante que importa, e nao um nome especifico: seja qual for a
+    # convencao de nome, um cartao nao pode virar link quebrado.
+    import re
+
     vault = legacy_vault(tmp_path)
     migrate.apply_migration(vault, dry_run=False)
     board = (vault / "Livros" / "livro" / "Quadro.md").read_text(encoding="utf-8")
-    assert "[[02-001324 Crítica à tese]]" in board
-    assert "2026-09-08 1205" not in board
+
+    book = vault / "Livros" / "livro"
+    existing = {p.stem for p in book.rglob("*.md")}
+    linked = set(re.findall(r"\[\[([^\]]+)\]\]", board))
+    # "Outra nota" nunca existiu como arquivo, so como link no quadro de origem.
+    assert linked & existing
+    assert "Crítica à tese" in " ".join(linked)
+
+
+def test_migration_renames_a_position_coded_note_to_its_date(tmp_path):
+    # O nome codificado por posicao foi uma etapa intermediaria; migrar de novo
+    # tem de trazer a nota para o nome por data.
+    vault = tmp_path / "Reading"
+    notas = vault / "Livros" / "livro" / "Notas"
+    notas.mkdir(parents=True)
+    (notas / "08-012438 Crítica à tese.md").write_text(NOTE, encoding="utf-8")
+    migrate.apply_migration(vault, dry_run=False)
+    got = list((vault / "Livros" / "livro" / "Anotações").glob("*.md"))
+    assert [p.name for p in got] == ["2026-09-08 1205 - Crítica à tese.md"]
 
 
 def test_migration_keeps_the_kanban_settings_block_untouched(tmp_path):
@@ -150,10 +171,15 @@ def test_migration_keeps_the_kanban_settings_block_untouched(tmp_path):
     assert board.rstrip().endswith("%%")
 
 
-def test_migration_creates_the_bases(tmp_path):
+def test_migration_removes_the_bases_it_replaced(tmp_path):
+    # As views de Bases deram lugar a uma pasta por tipo. Apagar e seguro: elas nao
+    # guardavam conteudo, so uma consulta sobre o frontmatter das notas.
     vault = legacy_vault(tmp_path)
+    (vault / "Recall.base").write_text(
+        "views:\n  - type: table\n", encoding="utf-8"
+    )
     migrate.apply_migration(vault, dry_run=False)
-    assert (vault / "Recall.base").is_file()
+    assert not (vault / "Recall.base").exists()
 
 
 def test_dry_run_changes_nothing_on_disk(tmp_path):
@@ -193,10 +219,10 @@ def test_migration_without_an_epub_still_moves_the_notes(tmp_path):
     vault = legacy_vault(tmp_path)
     (vault / "livro.epub").unlink()
     migrate.apply_migration(vault, dry_run=False)
-    notes = list((vault / "Livros" / "livro" / "Notas").glob("*.md"))
+    notes = list((vault / "Livros" / "livro" / "Anotações").glob("*.md"))
     assert len(notes) == 1
     # Sem livro nao ha capitulo: o prefixo cai para zero e a nota nao se perde.
-    assert notes[0].name.startswith("00-001324 ")
+    assert notes[0].name.startswith("2026-09-08 1205 - ")
 
 
 def test_dry_run_does_not_report_files_it_would_have_moved(tmp_path):
@@ -230,8 +256,8 @@ def test_an_epub_in_the_legacy_books_folder_resolves_chapters(tmp_path):
     (vault / "livro.epub").unlink()
     make_epub_with(vault / "Books" / "livro.epub", [CH_ONE, CH_TWO])
     migrate.apply_migration(vault, dry_run=False)
-    notes = list((vault / "Livros" / "livro" / "Notas").glob("*.md"))
-    assert notes[0].name == "02-001324 Crítica à tese.md"
+    notes = list((vault / "Livros" / "livro" / "Anotações").glob("*.md"))
+    assert notes[0].name == "2026-09-08 1205 - Crítica à tese.md"
     assert (vault / "Livros" / "livro" / "fonte" / "livro.epub").is_file()
 
 
@@ -240,3 +266,133 @@ def test_an_epub_with_no_notes_gets_its_own_book_directory(tmp_path):
     make_epub_with(vault / "Books" / "outro livro.epub", [CH_ONE])
     migrate.apply_migration(vault, dry_run=False)
     assert (vault / "Livros" / "outro livro" / "fonte" / "outro livro.epub").is_file()
+
+
+def test_a_vault_already_split_by_book_gets_routed_by_kind(tmp_path):
+    # O layout intermediario: um `Notas` por livro, antes das pastas por tipo.
+    vault = tmp_path / "Reading"
+    notas = vault / "Livros" / "livro" / "Notas"
+    notas.mkdir(parents=True)
+    (notas / "02-001324 Crítica à tese.md").write_text(
+        NOTE.replace(
+            "word_offset: 1324", "word_offset: 1324" + chr(10) + "kind: pergunta"
+        ),
+        encoding="utf-8",
+    )
+    fonte = vault / "Livros" / "livro" / "fonte"
+    fonte.mkdir(parents=True)
+    make_epub_with(fonte / "livro.epub", [CH_ONE, CH_TWO])
+
+    migrate.apply_migration(vault, dry_run=False)
+    assert (
+        vault / "Livros" / "livro" / "Perguntas"
+        / "2026-09-08 1205 - Crítica à tese.md"
+    ).is_file()
+    # O `Notas` vazio sai do caminho.
+    assert not notas.exists()
+
+
+def test_a_kind_already_in_the_frontmatter_is_trusted(tmp_path):
+    # Reclassificar apagaria uma decisao que o pipeline ja tomou com o LLM.
+    vault = legacy_vault(
+        tmp_path,
+        notes={
+            "nota.md": NOTE.replace(
+                "word_offset: 1324",
+                "word_offset: 1324" + chr(10) + "kind: recall",
+            )
+        },
+    )
+    migrate.apply_migration(vault, dry_run=False)
+    assert list((vault / "Livros" / "livro" / "Recall").glob("*.md"))
+
+
+def test_migration_from_the_intermediate_layout_is_idempotent(tmp_path):
+    vault = legacy_vault(tmp_path)
+    migrate.apply_migration(vault, dry_run=False)
+    snapshot = sorted(p.relative_to(vault).as_posix() for p in vault.rglob("*"))
+    assert migrate.apply_migration(vault, dry_run=False) == []
+    assert sorted(p.relative_to(vault).as_posix() for p in vault.rglob("*")) == snapshot
+
+
+def test_migration_creates_every_kind_directory(tmp_path):
+    # Uma pasta ausente e invisivel: abrir o livro e nao ver Recall deixa o recall
+    # sem lugar obvio para cair.
+    vault = legacy_vault(tmp_path)
+    migrate.apply_migration(vault, dry_run=False)
+    book = vault / "Livros" / "livro"
+    assert (book / "Anotações").is_dir()
+    assert (book / "Perguntas").is_dir()
+    assert (book / "Recall").is_dir()
+
+
+def test_a_missing_kind_directory_is_created_on_an_already_migrated_vault(tmp_path):
+    # Um vault reorganizado antes de os tipos virarem pasta so tem as que precisou.
+    vault = tmp_path / "Reading"
+    (vault / "Livros" / "livro" / "Anotações").mkdir(parents=True)
+    moves = migrate.apply_migration(vault, dry_run=False)
+    assert moves
+    assert (vault / "Livros" / "livro" / "Recall").is_dir()
+    assert (vault / "Livros" / "livro" / "Perguntas").is_dir()
+    # E na segunda vez nao ha nada a fazer.
+    assert migrate.apply_migration(vault, dry_run=False) == []
+
+
+def test_filling_kind_directories_respects_dry_run(tmp_path):
+    vault = tmp_path / "Reading"
+    (vault / "Livros" / "livro" / "Anotações").mkdir(parents=True)
+    assert migrate.apply_migration(vault, dry_run=True)
+    assert not (vault / "Livros" / "livro" / "Recall").exists()
+
+
+def test_a_coded_name_already_in_a_kind_directory_is_renamed(tmp_path):
+    # A nota chegou na pasta certa sob a convencao antiga; a passagem de rotas nao
+    # a ve, porque ela olha so de onde as notas vem.
+    vault = tmp_path / "Reading"
+    folder = vault / "Livros" / "livro" / "Anotações"
+    folder.mkdir(parents=True)
+    (folder / "08-012438 Crítica à tese.md").write_text(NOTE, encoding="utf-8")
+
+    migrate.apply_migration(vault, dry_run=False)
+    assert [p.name for p in folder.glob("*.md")] == [
+        "2026-09-08 1205 - Crítica à tese.md"
+    ]
+    # E na segunda vez o nome ja e o que ele quer, entao nada acontece.
+    assert migrate.apply_migration(vault, dry_run=False) == []
+
+
+def test_renaming_inside_a_kind_directory_relinks_the_board(tmp_path):
+    vault = tmp_path / "Reading"
+    book = vault / "Livros" / "livro"
+    (book / "Anotações").mkdir(parents=True)
+    (book / "Anotações" / "08-012438 Crítica à tese.md").write_text(
+        NOTE, encoding="utf-8"
+    )
+    (book / "Quadro.md").write_text(
+        BOARD.replace("2026-09-08 1205 - Crítica à tese", "08-012438 Crítica à tese"),
+        encoding="utf-8",
+    )
+    migrate.apply_migration(vault, dry_run=False)
+    board = (book / "Quadro.md").read_text(encoding="utf-8")
+    assert "[[2026-09-08 1205 - Crítica à tese]]" in board
+    assert "08-012438" not in board
+
+
+def test_renaming_respects_dry_run(tmp_path):
+    vault = tmp_path / "Reading"
+    folder = vault / "Livros" / "livro" / "Anotações"
+    folder.mkdir(parents=True)
+    (folder / "08-012438 Crítica à tese.md").write_text(NOTE, encoding="utf-8")
+    assert migrate.apply_migration(vault, dry_run=True)
+    assert (folder / "08-012438 Crítica à tese.md").is_file()
+
+
+def test_a_note_without_a_usable_date_keeps_its_name(tmp_path):
+    vault = tmp_path / "Reading"
+    folder = vault / "Livros" / "livro" / "Anotações"
+    folder.mkdir(parents=True)
+    (folder / "sem data.md").write_text(
+        NOTE.replace("date: 2026-09-08T12:05:00", "date: sei la"), encoding="utf-8"
+    )
+    migrate.apply_migration(vault, dry_run=False)
+    assert (folder / "sem data.md").is_file()

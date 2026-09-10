@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from handy_bridge.chapters import BookIndex
+from handy_bridge.layout import KIND_DIRS
 
 SYNTHESIS_HEADING = "## Síntese"
 OBSERVATIONS_HEADING = "## Minhas observações"
@@ -197,6 +198,10 @@ class NoteSummary:
     body: str
     questions: list[tuple[str, str]]
     recall: list[str]
+    # Reading position, read from the frontmatter. The filename carries the date
+    # instead, so these are the only place position survives.
+    chapter: int | None = None
+    word_offset: int | None = None
 
 
 def _callout_blocks(lines: list[str], marker: str) -> list[list[str]]:
@@ -272,22 +277,41 @@ def parse_note(path: Path) -> NoteSummary | None:
         body=" ".join(body).strip(),
         questions=questions,
         recall=recall,
+        chapter=_int_field(lines, "chapter"),
+        word_offset=_int_field(lines, "word_offset"),
     )
 
 
-def collect_chapter_notes(notes_dir: Path, chapter: int) -> list[NoteSummary]:
-    """Every note recorded in one chapter, in reading order."""
-    notes_dir = Path(notes_dir)
-    if not notes_dir.is_dir():
-        return []
-    prefix = f"{chapter:02d}-"
-    wide = f"{chapter:03d}-"
-    found = [
-        parse_note(path)
-        for path in sorted(notes_dir.glob("*.md"))
-        if path.name.startswith(prefix) or path.name.startswith(wide)
-    ]
-    return [note for note in found if note is not None]
+def _int_field(lines: list[str], name: str) -> int | None:
+    raw = _field(lines, name)
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def collect_chapter_notes(book_dir: Path, chapter: int) -> list[NoteSummary]:
+    """Every note recorded in one chapter, across the kind directories.
+
+    Selected by the `chapter` in each note's frontmatter, not by its filename: the
+    filename carries the recording date now, so it says nothing about position.
+    That costs reading every note in the book to build one chapter's summary,
+    which is nothing next to the transcription that produced the note.
+
+    Ordered by chapter then word offset, which restores the reading order that
+    splitting into kind directories necessarily breaks up.
+    """
+    book_dir = Path(book_dir)
+    found: list[NoteSummary] = []
+    for folder in KIND_DIRS.values():
+        target = book_dir / folder
+        if not target.is_dir():
+            continue
+        for path in target.glob("*.md"):
+            note = parse_note(path)
+            if note is not None and note.chapter == chapter:
+                found.append(note)
+    return sorted(found, key=lambda n: (n.word_offset if n.word_offset is not None else 0, n.stem))
 
 
 def sections_from(notes: list[NoteSummary]) -> dict[str, list[str]]:

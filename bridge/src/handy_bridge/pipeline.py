@@ -122,7 +122,6 @@ def process_note(
 
     chapter = None
     index = None
-    width = layout.MIN_CHAPTER_DIGITS
     if book:
         try:
             ensure_book_markdown(cfg.vault_path, book)
@@ -137,7 +136,6 @@ def process_note(
             epub_source(cfg.vault_path, book),
         )
         if index is not None:
-            width = index.width
             chapter = chapters_mod.resolve(index, excerpt, word_offset)
 
     recall = RecallCheck()
@@ -154,8 +152,11 @@ def process_note(
             # The check is a convenience; the note and its cards still go out.
             log.warning("recall check failed for %s: %s", incoming.note_id, exc)
 
+    # All three kind directories, so the book's shape is visible in the explorer
+    # even before a kind has been recorded.
+    layout.ensure_kind_dirs(cfg.vault_path, book)
     note_path = write_note(
-        layout.notes_dir(cfg.vault_path, book),
+        layout.notes_dir(cfg.vault_path, book, note_kind),
         NoteData(
             title=title,
             tags=tags,
@@ -177,7 +178,6 @@ def process_note(
             recall_points=[(p.said, p.actual, p.correct) for p in recall.points],
             recall_missed=list(recall.missed),
         ),
-        width=width,
     )
 
     # Everything below is best-effort: the note is already safe on disk.
@@ -237,17 +237,6 @@ def _update_board(
         kanban.add_cards(board, lane, cards)
 
 
-def _offset_from_stem(stem: str) -> int | None:
-    """Read the reading position back out of a note's filename.
-
-    The name is `<chapter>-<offset> <title>`, so the offset is already there and
-    reading the file to find it would be wasted work.
-    """
-    head = stem.split(" ", 1)[0]
-    _, _, offset = head.partition("-")
-    return int(offset) if offset.isdigit() else None
-
-
 def _last_recall_offset(cfg: Config, book: str, chapter: int) -> int | None:
     """Where the previous recall in this chapter left off.
 
@@ -255,14 +244,12 @@ def _last_recall_offset(cfg: Config, book: str, chapter: int) -> int | None:
     chapter — the right default for the first recall of a reading run.
     """
     notes = summaries.collect_chapter_notes(
-        layout.notes_dir(cfg.vault_path, book), chapter
+        layout.book_dir(cfg.vault_path, book), chapter
     )
     offsets = [
-        offset
+        note.word_offset
         for note in notes
-        if note.kind == "recall"
-        for offset in [_offset_from_stem(note.stem)]
-        if offset is not None
+        if note.kind == "recall" and note.word_offset is not None
     ]
     return max(offsets) if offsets else None
 
@@ -319,7 +306,7 @@ def _write_chapter_summary(
     processor: PostProcessor,
 ) -> None:
     notes = summaries.collect_chapter_notes(
-        layout.notes_dir(cfg.vault_path, book), chapter
+        layout.book_dir(cfg.vault_path, book), chapter
     )
     if not notes:
         return

@@ -16,7 +16,7 @@ device → POST /v1/notes → WAV salvo em disco → 200 imediato
                               ↓
                           título, tags, tipo e limpeza
                               ↓
-                          Livros/<livro>/Notas/*.md
+                          Livros/<livro>/<tipo>/*.md
                               ↓
                           resumo do capítulo e do livro
 ```
@@ -104,35 +104,39 @@ escrita com a transcrição crua e título por timestamp.
 
 ```
 Reading/
-├── Anotações.base                ← porta de entrada por tipo de nota
-├── Perguntas.base
-├── Recall.base
 ├── Livros/
 │   └── Sapiens/
 │       ├── Sapiens.md            ← resumo do livro     (derivado)
 │       ├── Capítulos/
 │       │   └── 04 - Os Navegadores.md   (derivado)
-│       ├── Notas/
-│       │   └── 04-012438 Crítica à tese sobre agricultura.md
+│       ├── Anotações/            ← uma pasta por tipo de nota
+│       │   └── 2026-09-08 1205 - Crítica à tese sobre agricultura.md
+│       ├── Perguntas/
+│       ├── Recall/
 │       ├── Quadro.md             ← pendências
 │       └── fonte/                ← epub, markdown convertido, índice
 └── Geral/                        ← notas gravadas fora da leitura
 ```
 
-Três eixos, três mecanismos, sem duplicar dado: **pastas** carregam a posição de
-leitura, as **views de Bases** carregam o tipo, o **quadro do Kanban** carrega o
-status. Pasta só corta de um jeito, e uma view lê o frontmatter das notas — então
-não existe índice para ficar dessincronizado.
+Três eixos, três mecanismos: **pastas por tipo** para achar uma anotação, o **resumo
+do capítulo** para a posição de leitura, o **quadro do Kanban** para o status. As três
+pastas existem sempre, mesmo vazias — uma pasta ausente é invisível, e abrir um livro
+sem ver `Recall` deixa o recall sem lugar óbvio para cair.
 
-O nome do arquivo é **capítulo e offset, não data**. Reler o capítulo 2 depois do 8
-devolve a nota ao lugar dela no livro; a data segue no frontmatter, onde as views
-ordenam por ela. O capítulo sai da busca do trecho no texto convertido, nunca de
-aritmética de offset — o device conta palavras com o tokenizador dele e o bridge com
-o próprio, e os dois nunca vão bater.
+O nome do arquivo é **a data e a hora da gravação**. A posição de leitura vive no
+frontmatter (`chapter`, `word_offset`), que é de onde os resumos a leem. O capítulo sai
+da busca do trecho no texto convertido, nunca de aritmética de offset — o device conta
+palavras com o tokenizador dele e o bridge com o próprio, e os dois nunca vão bater.
 
-`Notas/` é **fonte**: escrita uma vez, nunca reescrita. Os resumos são **derivados**,
-reconstruíveis a partir das notas. Isso não é organização, é segurança: uma cópia de
-conflito do OneDrive num derivado não custa nada, porque basta gerar de novo.
+Pasta por tipo tem um custo, e ele é real: as notas de um mesmo capítulo ficam
+espalhadas em três pastas, e o nome do arquivo não diz onde no livro elas estão. É o
+**resumo do capítulo** que devolve essa visão, com as três seções juntas e em ordem de
+leitura — ordenadas por `word_offset`, não por data de gravação.
+
+As notas são **fonte**: escritas uma vez, nunca reescritas. Os resumos são
+**derivados**, reconstruíveis a partir delas. Isso não é organização, é segurança:
+uma cópia de conflito do OneDrive num derivado não custa nada, porque basta gerar de
+novo.
 
 Migrar um vault do layout antigo:
 

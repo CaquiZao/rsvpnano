@@ -117,30 +117,25 @@ def test_slugify_replaces_reserved_path_chars_and_keeps_accents():
     assert slugify("   ") == "Sem titulo"
 
 
-def test_write_note_creates_the_folder_and_names_by_position(tmp_path):
-    path = write_note(tmp_path / "Notas", sample(chapter=1, word_offset=1324))
+def test_write_note_creates_the_folder_and_names_by_date(tmp_path):
+    path = write_note(tmp_path / "Anotações", sample(chapter=1, word_offset=1324))
     assert path.parent.is_dir()
-    assert path.name == "01-001324 Ideia de captura por voz.md"
+    assert path.name == "2026-09-07 1432 - Ideia de captura por voz.md"
     assert "Texto limpo." in path.read_text(encoding="utf-8")
-
-
-def test_write_note_pads_the_chapter_to_the_requested_width(tmp_path):
-    path = write_note(tmp_path / "Notas", sample(chapter=7, word_offset=2), width=3)
-    assert path.name.startswith("007-000002 ")
+    # A posicao de leitura segue no frontmatter, que e de onde os resumos a leem.
+    assert "chapter: 1" in path.read_text(encoding="utf-8")
 
 
 def test_write_note_never_overwrites(tmp_path):
-    notes = tmp_path / "Notas"
-    # Duas gravacoes no mesmo ponto do livro: e o caso real das notas de 14:00 e
-    # 16:10, que compartilham o offset 8120.
-    first = write_note(notes, sample(chapter=3, word_offset=8120))
-    second = write_note(notes, sample(chapter=3, word_offset=8120))
+    notes = tmp_path / "Anotações"
+    first = write_note(notes, sample())
+    second = write_note(notes, sample())
     assert first != second
     assert second.name.endswith("-2.md")
 
 
 def test_write_note_leaves_no_temp_files(tmp_path):
-    notes = tmp_path / "Notas"
+    notes = tmp_path / "Anotações"
     write_note(notes, sample())
     assert [p.name for p in notes.iterdir() if p.suffix != ".md"] == []
 
@@ -221,7 +216,7 @@ from handy_bridge.note import append_followup  # noqa: E402
 
 
 def test_append_followup_inserts_before_the_raw_transcript(tmp_path):
-    path = write_note(tmp_path / "Inbox", sample(answers=[("q1", "a1")]))
+    path = write_note(tmp_path / "Anotações", sample(answers=[("q1", "a1")]))
     append_followup(path, "e isso?", "assim.")
     text = path.read_text(encoding="utf-8")
 
@@ -232,13 +227,13 @@ def test_append_followup_inserts_before_the_raw_transcript(tmp_path):
 
 
 def test_append_followup_appends_at_the_end_when_there_is_no_transcript(tmp_path):
-    path = write_note(tmp_path / "Inbox", sample(raw_transcript=""))
+    path = write_note(tmp_path / "Anotações", sample(raw_transcript=""))
     append_followup(path, "q", "a")
     assert path.read_text(encoding="utf-8").rstrip().endswith("> a")
 
 
 def test_several_followups_keep_their_order(tmp_path):
-    path = write_note(tmp_path / "Inbox", sample())
+    path = write_note(tmp_path / "Anotações", sample())
     append_followup(path, "primeira", "r1")
     append_followup(path, "segunda", "r2")
     text = path.read_text(encoding="utf-8")
@@ -246,13 +241,13 @@ def test_several_followups_keep_their_order(tmp_path):
 
 
 def test_append_followup_quotes_a_multiline_answer(tmp_path):
-    path = write_note(tmp_path / "Inbox", sample())
+    path = write_note(tmp_path / "Anotações", sample())
     append_followup(path, "q", "linha um\nlinha dois")
     assert "> linha um\n> linha dois" in path.read_text(encoding="utf-8")
 
 
 def test_append_followup_leaves_no_temp_file(tmp_path):
-    inbox = tmp_path / "Inbox"
+    inbox = tmp_path / "Anotações"
     path = write_note(inbox, sample())
     append_followup(path, "q", "a")
     assert [p.name for p in inbox.iterdir() if p.suffix != ".md"] == []

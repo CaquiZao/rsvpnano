@@ -237,50 +237,77 @@ def test_parse_note_reads_recall_points_side_by_side(tmp_path):
     assert got.recall[2].startswith("—")
 
 
+def book_with(tmp_path, files: dict[str, str]):
+    """Lay notes out the way the vault does: one directory per kind."""
+    for name, text in files.items():
+        folder, _, filename = name.partition("/")
+        target = tmp_path / folder
+        target.mkdir(parents=True, exist_ok=True)
+        (target / filename).write_text(text, encoding="utf-8")
+    return tmp_path
+
+
 def test_collect_chapter_notes_takes_only_that_chapter(tmp_path):
-    notes = tmp_path / "Notas"
-    notes.mkdir()
-    (notes / "03-000010 a.md").write_text(NOTE_TEXT, encoding="utf-8")
-    (notes / "03-000020 b.md").write_text(RECALL_TEXT, encoding="utf-8")
-    (notes / "08-000030 c.md").write_text(NOTE_TEXT, encoding="utf-8")
-    got = summaries.collect_chapter_notes(notes, 3)
-    assert [n.stem[:2] for n in got] == ["03", "03"]
+    book = book_with(tmp_path, {
+        "Perguntas/2026-09-08 1205 - a.md": NOTE_TEXT,
+        "Recall/2026-09-08 1300 - b.md": RECALL_TEXT,
+        "Perguntas/2026-09-08 1400 - c.md": NOTE_TEXT.replace(
+            "chapter: 3", "chapter: 8"
+        ),
+    })
+    got = summaries.collect_chapter_notes(book, 3)
+    assert [n.title for n in got] == ["Física e química", "Recapitulando"]
 
 
-def test_collect_chapter_notes_handles_a_three_digit_prefix(tmp_path):
-    notes = tmp_path / "Notas"
-    notes.mkdir()
-    (notes / "003-000010 a.md").write_text(NOTE_TEXT, encoding="utf-8")
-    assert len(summaries.collect_chapter_notes(notes, 3)) == 1
+def test_the_chapter_comes_from_the_frontmatter_not_the_filename(tmp_path):
+    # O nome e a data da gravacao, entao nao diz nada sobre posicao no livro.
+    book = book_with(tmp_path, {"Anotações/nome qualquer.md": NOTE_TEXT})
+    assert len(summaries.collect_chapter_notes(book, 3)) == 1
+    assert summaries.collect_chapter_notes(book, 8) == []
+
+
+def test_collect_chapter_notes_crosses_the_kind_directories_in_reading_order(tmp_path):
+    # As pastas por tipo separam as notas; o resumo do capitulo e onde elas voltam
+    # a ficar juntas, e a ordem tem de ser a de leitura, nao a das pastas nem a
+    # cronologica.
+    def at(text: str, offset: int) -> str:
+        return text.replace("chapter: 3", f"chapter: 3\nword_offset: {offset}")
+
+    book = book_with(tmp_path, {
+        "Recall/2026-09-08 1205 - primeiro gravado.md": at(RECALL_TEXT, 900),
+        "Perguntas/2026-09-08 2300 - lido antes.md": at(NOTE_TEXT, 100),
+    })
+    got = summaries.collect_chapter_notes(book, 3)
+    assert [n.word_offset for n in got] == [100, 900]
+
+
+def test_collect_chapter_notes_on_an_empty_book_is_empty(tmp_path):
+    assert summaries.collect_chapter_notes(tmp_path / "nao-existe", 3) == []
 
 
 def test_sections_from_splits_by_kind_and_links_back(tmp_path):
-    notes = tmp_path / "Notas"
-    notes.mkdir()
-    (notes / "03-000010 a.md").write_text(
-        NOTE_TEXT.replace("kind: pergunta", "kind: anotação"), encoding="utf-8"
-    )
-    (notes / "03-000020 b.md").write_text(RECALL_TEXT, encoding="utf-8")
-    got = summaries.sections_from(summaries.collect_chapter_notes(notes, 3))
+    book = book_with(tmp_path, {
+        "Anotações/03-000010 a.md": NOTE_TEXT.replace(
+            "kind: pergunta", "kind: anotação"
+        ),
+        "Recall/03-000020 b.md": RECALL_TEXT,
+    })
+    got = summaries.sections_from(summaries.collect_chapter_notes(book, 3))
     assert any("[[03-000010 a]]" in item for item in got["Anotações"])
     assert any("definição de física" in item for item in got["Perguntas e respostas"])
     assert any("[[03-000020 b]]" in item for item in got["Recall"])
 
 
 def test_synthesis_input_carries_the_kind_of_each_line(tmp_path):
-    notes = tmp_path / "Notas"
-    notes.mkdir()
-    (notes / "03-000020 b.md").write_text(RECALL_TEXT, encoding="utf-8")
-    got = summaries.synthesis_input(summaries.collect_chapter_notes(notes, 3))
+    book = book_with(tmp_path, {"Recall/03-000020 b.md": RECALL_TEXT})
+    got = summaries.synthesis_input(summaries.collect_chapter_notes(book, 3))
     assert any(line.startswith("[recall]") for line in got)
 
 
 def test_a_recall_note_with_no_check_still_shows_up(tmp_path):
-    notes = tmp_path / "Notas"
-    notes.mkdir()
     bare = RECALL_TEXT.split("> [!success]")[0]
-    (notes / "03-000020 b.md").write_text(bare, encoding="utf-8")
-    got = summaries.sections_from(summaries.collect_chapter_notes(notes, 3))
+    book = book_with(tmp_path, {"Recall/03-000020 b.md": bare})
+    got = summaries.sections_from(summaries.collect_chapter_notes(book, 3))
     assert got["Recall"]
 
 

@@ -110,9 +110,8 @@ def test_writes_note_with_post_processed_fields(tmp_path):
     )
     text = path.read_text(encoding="utf-8")
 
-    # Sem livro nao ha capitulo nem offset, entao o prefixo de posicao e zero e
-    # a data segue no frontmatter, onde as views de Bases ordenam por ela.
-    assert path.name == "00-000000 Meu titulo.md"
+    # O nome e a data da gravacao; a posicao de leitura vive no frontmatter.
+    assert path.name == "2026-09-07 1432 - Meu titulo.md"
     assert "Texto limpo." in text
     assert "> ola mundo" in text  # transcrição crua preservada
     assert "tags: [ideia]" in text
@@ -463,8 +462,10 @@ def test_process_note_writes_into_the_book_layout_with_a_resolved_chapter(tmp_pa
         processor=None,
     )
 
-    assert path.parent == cfg.vault_path / "Livros" / "livro" / "Notas"
-    assert path.name.startswith("02-001324 ")
+    # A transcricao diz "recapitulando", entao a nota e um recall e vai para a
+    # pasta desse tipo.
+    assert path.parent == cfg.vault_path / "Livros" / "livro" / "Recall"
+    assert path.name == "2026-09-09 2205 - 2026-09-09 2205.md"
     text = path.read_text(encoding="utf-8")
     assert "chapter: 2" in text
     assert 'chapter_title: "Dois"' in text
@@ -492,7 +493,7 @@ def test_process_note_without_a_book_lands_in_geral(tmp_path):
         "n", make_wav(tmp_path / "n.wav"), {"clock_synced": True}
     )
     path = process_note(incoming, cfg, transcribe_fn=ok_transcribe(), processor=None)
-    assert path.parent == cfg.vault_path / "Geral" / "Notas"
+    assert path.parent == cfg.vault_path / "Geral" / "Anotações"
     assert "chapter:" not in path.read_text(encoding="utf-8")
 
 
@@ -551,3 +552,22 @@ def test_two_notes_at_the_same_position_do_not_collide(tmp_path):
         cfg, transcribe_fn=ok_transcribe(), processor=None,
     )
     assert first != second and second.name.endswith("-2.md")
+
+
+def test_a_note_creates_every_kind_directory(tmp_path):
+    cfg = vault_with_epub(tmp_path, [CH_ONE, CH_TWO])
+    process_note(
+        IncomingNote("n", make_wav(tmp_path / "n.wav"), {
+            "clock_synced": True, "book": "livro", "word_offset": 3,
+            "excerpt": "o comeco do livro fala de outras coisas quaisquer",
+        }),
+        cfg, transcribe_fn=ok_transcribe(), processor=None,
+    )
+    book = cfg.vault_path / "Livros" / "livro"
+    # Conjunto, nao lista: a ordem de Path.iterdir depende da plataforma.
+    assert {p.name for p in book.iterdir() if p.is_dir()} == {
+        "Anotações",
+        "Perguntas",
+        "Recall",
+        "fonte",
+    }

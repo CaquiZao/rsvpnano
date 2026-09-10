@@ -17,11 +17,12 @@ import os
 import re
 import shutil
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
-from handy_bridge import bases, chapters as chapters_mod, layout
+from handy_bridge import chapters as chapters_mod, layout
 from handy_bridge.epub import EpubError, convert_to_markdown, epub_source
-from handy_bridge.kind import DEFAULT_KIND, spoken_recall_marker
+from handy_bridge.kind import DEFAULT_KIND, VALID_KINDS, spoken_recall_marker
 from handy_bridge.note import slugify
 
 log = logging.getLogger(__name__)
@@ -29,6 +30,10 @@ log = logging.getLogger(__name__)
 LEGACY_INBOX = "Inbox"
 LEGACY_BOARDS = "Quadros"
 LEGACY_BOOKS = "Books"
+# The single notes directory this vault used before notes were split by kind.
+LEGACY_NOTES = "Notas"
+# Bases views were replaced by one directory per kind, so their files go too.
+LEGACY_BASES = ("Anotações.base", "Perguntas.base", "Recall.base")
 
 QUOTE_CALLOUT = "> [!quote]"
 QUESTION_CALLOUT = "> [!question]"
@@ -37,6 +42,8 @@ SETTINGS_MARKER = "%% kanban:settings"
 
 _OFFSET = re.compile(r"^word_offset:\s*(\d+)\s*$", re.MULTILINE)
 _TITLE = re.compile(r'^title:\s*"?(?P<title>.*?)"?\s*$', re.MULTILINE)
+_KIND = re.compile(r"^kind:\s*(?P<kind>\S+)\s*$", re.MULTILINE)
+_DATE = re.compile(r"^date:\s*(?P<date>\S+)\s*$", re.MULTILINE)
 _WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
 _CARD = re.compile(r"^- \[(?P<mark>[ xX])\]\s*(?P<body>.*)$")
 
@@ -48,6 +55,9 @@ class Move:
     why: str
 
     def __str__(self) -> str:
+        # A removal has nowhere to point at, so showing an arrow would be a lie.
+        if self.src == self.dst:
+            return f"{self.why}: {self.src.name}"
         return f"{self.why}: {self.src.name} -> {self.dst}"
 
 
@@ -101,6 +111,26 @@ def classify(text: str) -> str:
 def read_title(text: str, fallback: str) -> str:
     match = _TITLE.search(text)
     return (match.group("title").strip() if match else "") or fallback
+
+
+def read_kind(text: str) -> str | None:
+    """A kind already written by an earlier pass. Trusted over reclassifying."""
+    match = _KIND.search(text)
+    if match is None:
+        return None
+    value = match.group("kind").strip()
+    return value if value in VALID_KINDS else None
+
+
+def read_date(text: str) -> datetime | None:
+    """The recorded moment, which is what the filename is built from now."""
+    match = _DATE.search(text)
+    if match is None:
+        return None
+    try:
+        return datetime.fromisoformat(match.group("date").strip())
+    except ValueError:
+        return None
 
 
 def read_offset(text: str) -> int | None:
@@ -195,13 +225,31 @@ def _write_atomic(path: Path, content: str) -> None:
 
 
 def _legacy_books(vault_path: Path) -> list[str]:
-    """Book stems that still have something in the old layout."""
+    """Book stems that still have something outside the current layout."""
     inbox = vault_path / LEGACY_INBOX
     stems = {p.name for p in inbox.iterdir() if p.is_dir()} if inbox.is_dir() else set()
     boards = vault_path / LEGACY_BOARDS
     if boards.is_dir():
         stems |= {p.stem for p in boards.glob("*.md")}
+    # A vault reorganised before notes were split by kind has a single `Notas`
+    # directory per book; those notes still need routing.
+    books = vault_path / layout.BOOKS_DIR
+    if books.is_dir():
+        stems |= {
+            p.name for p in books.iterdir() if (p / LEGACY_NOTES).is_dir()
+        }
+    if (vault_path / layout.GENERAL_DIR / LEGACY_NOTES).is_dir():
+        stems.add("")
     return sorted(stems)
+
+
+def _note_sources(vault_path: Path, stem: str) -> list[Path]:
+    """Directories a book's notes may still be sitting in."""
+    candidates = [
+        vault_path / LEGACY_INBOX / stem if stem else None,
+        layout.book_dir(vault_path, stem) / LEGACY_NOTES,
+    ]
+    return [path for path in candidates if path is not None and path.is_dir()]
 
 
 def _unique(folder: Path, stem: str, taken: set[Path]) -> Path:
@@ -217,8 +265,8 @@ def _migrate_notes(
     vault_path: Path, stem: str, *, dry_run: bool
 ) -> tuple[list[Move], dict[str, str]]:
     """Move and rewrite one book's notes. Returns the moves and the rename map."""
-    source = vault_path / LEGACY_INBOX / stem
-    if not source.is_dir():
+    sources = _note_sources(vault_path, stem)
+    if not sources:
         return [], {}
 
     index = chapters_mod.load_index(
@@ -228,18 +276,21 @@ def _migrate_notes(
         # A dry run must not leave a cache file behind.
         write_cache=not dry_run,
     )
-    width = index.width if index else layout.MIN_CHAPTER_DIGITS
-    target_dir = layout.notes_dir(vault_path, stem)
 
     moves: list[Move] = []
     renames: dict[str, str] = {}
     taken: set[Path] = set()
-    for note in sorted(source.glob("*.md")):
+    notes = sorted(
+        (note for source in sources for note in source.glob("*.md")),
+        key=lambda p: p.name,
+    )
+    for note in notes:
         text = note.read_text(encoding="utf-8")
         excerpt, offset = read_excerpt(text), read_offset(text)
         resolved = chapters_mod.resolve(index, excerpt, offset) if index else None
+        kind = read_kind(text) or classify(text)
 
-        additions = [f"kind: {classify(text)}"]
+        additions = [f"kind: {kind}"]
         if resolved is not None:
             additions += [
                 f"chapter: {resolved.chapter}",
@@ -248,17 +299,23 @@ def _migrate_notes(
             ]
 
         title = read_title(text, note.stem)
-        new_stem = layout.note_stem(
-            resolved.chapter if resolved else None, offset, title, width
-        )
-        target = _unique(target_dir, new_stem, taken)
+        recorded = read_date(text)
+        # Falling back to the existing stem keeps a note whose frontmatter has no
+        # usable date from being renamed to something worse than what it had.
+        new_stem = layout.note_stem(recorded, title) if recorded else note.stem
+        # One directory per kind: that is the whole point of this pass.
+        target = _unique(layout.notes_dir(vault_path, stem, kind), new_stem, taken)
         taken.add(target)
         renames[note.stem] = target.stem
-        moves.append(Move(note, target, "nota"))
+        moves.append(Move(note, target, f"nota → {kind}"))
 
         if not dry_run:
             _write_atomic(target, add_frontmatter(text, additions))
             note.unlink()
+
+    if moves and not dry_run:
+        # Even the kinds this book has none of, so the layout explains itself.
+        layout.ensure_kind_dirs(vault_path, stem)
     return moves, renames
 
 
@@ -327,6 +384,99 @@ def _orphan_epubs(
     return moves
 
 
+def _rename_to_dates(
+    vault_path: Path, *, dry_run: bool
+) -> tuple[list[Move], dict[str, dict[str, str]]]:
+    """Rename notes already in a kind directory but still carrying a coded name.
+
+    The position-coded filename was an intermediate step. A note that reached its
+    kind directory under that convention would otherwise keep the code forever,
+    since the routing pass only looks at the directories notes come *from*.
+
+    Idempotent because the target stem is computed from the note's own date: once
+    renamed, the computed stem equals the current one and nothing moves.
+    """
+    moves: list[Move] = []
+    renames: dict[str, dict[str, str]] = {}
+    for stem in _current_books(vault_path):
+        for folder in layout.all_notes_dirs(vault_path, stem):
+            if not folder.is_dir():
+                continue
+            for note in sorted(folder.glob("*.md")):
+                text = note.read_text(encoding="utf-8")
+                recorded = read_date(text)
+                if recorded is None:
+                    continue
+                wanted = layout.note_stem(recorded, read_title(text, note.stem))
+                if wanted == note.stem:
+                    continue
+                target = _unique(folder, wanted, set())
+                moves.append(Move(note, target, "nota renomeada"))
+                renames.setdefault(stem, {})[note.stem] = target.stem
+                if not dry_run:
+                    note.replace(target)
+    return moves, renames
+
+
+def _current_books(vault_path: Path) -> list[str | None]:
+    """Books that already have a directory in the current layout."""
+    out: list[str | None] = []
+    books = vault_path / layout.BOOKS_DIR
+    if books.is_dir():
+        out += [p.name for p in sorted(books.iterdir()) if p.is_dir()]
+    if (vault_path / layout.GENERAL_DIR).is_dir():
+        out.append(None)
+    return out
+
+
+def _relink_board(
+    vault_path: Path, stem: str | None, renames: dict[str, str], *, dry_run: bool
+) -> list[Move]:
+    """Point an existing board's cards at notes that were just renamed."""
+    board = layout.board_path(vault_path, stem)
+    if not board.is_file() or not renames:
+        return []
+    if not dry_run:
+        _write_atomic(board, rewrite_board(board.read_text(encoding="utf-8"), renames))
+    return [Move(board, board, "quadro religado")]
+
+
+def _fill_kind_dirs(vault_path: Path, *, dry_run: bool) -> list[Move]:
+    """Create any kind directory a book is missing.
+
+    Runs even when there is nothing to move, because a vault reorganised before
+    the kinds became directories has only the ones it happened to need. Reports
+    only the directories it actually had to create, which is what keeps a second
+    run reporting nothing.
+    """
+    moves: list[Move] = []
+    for stem in _current_books(vault_path):
+        for folder in layout.all_notes_dirs(vault_path, stem):
+            if folder.is_dir():
+                continue
+            moves.append(Move(folder, folder, "pasta criada"))
+            if not dry_run:
+                folder.mkdir(parents=True, exist_ok=True)
+    return moves
+
+
+def _drop_bases(vault_path: Path, *, dry_run: bool) -> list[Move]:
+    """Remove the Bases views, replaced by one directory per kind.
+
+    Safe to delete outright: they held no content of their own, only a query over
+    the notes' frontmatter.
+    """
+    moves: list[Move] = []
+    for name in LEGACY_BASES:
+        path = vault_path / name
+        if not path.is_file():
+            continue
+        moves.append(Move(path, path, "base removida"))
+        if not dry_run:
+            path.unlink()
+    return moves
+
+
 def _drop_empty_legacy_dirs(
     vault_path: Path, moved: set[Path], *, dry_run: bool
 ) -> list[str]:
@@ -337,8 +487,14 @@ def _drop_empty_legacy_dirs(
     reports every file it is about to migrate as unclassifiable.
     """
     leftovers: list[str] = []
-    for name in (LEGACY_INBOX, LEGACY_BOARDS, LEGACY_BOOKS):
-        folder = vault_path / name
+    folders = [vault_path / name for name in (LEGACY_INBOX, LEGACY_BOARDS, LEGACY_BOOKS)]
+    # The per-book `Notas` directories go the same way once their notes are routed.
+    books = vault_path / layout.BOOKS_DIR
+    if books.is_dir():
+        folders += [p / LEGACY_NOTES for p in sorted(books.iterdir()) if p.is_dir()]
+    folders.append(vault_path / layout.GENERAL_DIR / LEGACY_NOTES)
+
+    for folder in folders:
         if not folder.is_dir():
             continue
         # Prune empty book subfolders first so an emptied Inbox can go too.
@@ -371,14 +527,21 @@ def apply_migration(vault_path: Path, *, dry_run: bool = True) -> list[Move]:
 
     moves += _orphan_epubs(vault_path, {m.src for m in moves}, dry_run=dry_run)
 
+    # Notes that reached their kind directory under the old coded name.
+    renamed, renames = _rename_to_dates(vault_path, dry_run=dry_run)
+    moves += renamed
+    for stem, mapping in renames.items():
+        moves += _relink_board(vault_path, stem, mapping, dry_run=dry_run)
+
+    moves += _drop_bases(vault_path, dry_run=dry_run)
+    moves += _fill_kind_dirs(vault_path, dry_run=dry_run)
+
     leftovers = _drop_empty_legacy_dirs(
         vault_path, {m.src for m in moves}, dry_run=dry_run
     )
     for left in leftovers:
         log.warning("não soube classificar, mantido no lugar: %s", left)
 
-    if moves and not dry_run:
-        bases.write_bases(vault_path)
     return moves
 
 

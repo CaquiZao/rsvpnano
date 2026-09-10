@@ -54,7 +54,7 @@ def test_processes_submitted_notes(tmp_path):
 
     # These notes carry no book, so they land in the general folder rather than
     # loose in the inbox: one subfolder per book keeps parallel readings apart.
-    notes = list((cfg.vault_path / "Geral" / "Notas").glob("*.md"))
+    notes = list((cfg.vault_path / "Geral" / "Anotações").glob("*.md"))
     assert len(notes) == 1
     assert "ola" in notes[0].read_text(encoding="utf-8")
 
@@ -81,6 +81,6 @@ def test_one_failure_does_not_kill_the_worker(tmp_path):
 
     # These notes carry no book, so they land in the general folder rather than
     # loose in the inbox: one subfolder per book keeps parallel readings apart.
-    notes = list((cfg.vault_path / "Geral" / "Notas").glob("*.md"))
+    notes = list((cfg.vault_path / "Geral" / "Anotações").glob("*.md"))
     assert len(notes) == 1
     assert "segunda" in notes[0].read_text(encoding="utf-8")

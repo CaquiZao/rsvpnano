@@ -23,8 +23,9 @@ class NoteData:
     date_estimated: bool
     duration_s: float
     asr_model: str
-    # What the recording was for. Always written: it is the axis the Bases views
-    # filter on, so a note without it would be invisible in all three of them.
+    # What the recording was for. It also decides which directory the note lands
+    # in, and is written to the frontmatter anyway so a note stays self-describing
+    # if it is ever moved by hand.
     kind: NoteKind = DEFAULT_KIND
     # Present only when the recording was triggered from inside the reader.
     book: str | None = None
@@ -215,7 +216,7 @@ def _unique_path(folder: Path, stem: str) -> Path:
     return candidate
 
 
-def write_note(notes_dir: Path, note: NoteData, *, width: int = 2) -> Path:
+def write_note(notes_dir: Path, note: NoteData) -> Path:
     """Write the note atomically so OneDrive never syncs a partial file."""
     # Imported here because `layout` takes `slugify` from this module. The other way
     # out would be a third module holding one function, which buys nothing.
@@ -223,9 +224,7 @@ def write_note(notes_dir: Path, note: NoteData, *, width: int = 2) -> Path:
 
     notes_dir = Path(notes_dir)
     notes_dir.mkdir(parents=True, exist_ok=True)
-    target = _unique_path(
-        notes_dir, note_stem(note.chapter, note.word_offset, note.title, width)
-    )
+    target = _unique_path(notes_dir, note_stem(note.recorded_at, note.title))
 
     tmp = target.with_name(target.name + ".partial")
     tmp.write_text(render(note), encoding="utf-8")
