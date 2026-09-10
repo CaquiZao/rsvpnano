@@ -48,9 +48,32 @@ def refuse(target: Path, note_id: str, reason: str, meta: str | None = None) -> 
     return JSONResponse({"error": reason}, status_code=400)
 
 
-def create_app(cfg: Config, submit: Callable[[IncomingNote], None] | None = None) -> FastAPI:
+class RemembersNothing:
+    """The default note_id store: accepts everything, keeps nothing.
+
+    Only the Drive route reads the store, so a bridge with the fallback
+    switched off has nothing to remember. It exists so this endpoint does not
+    have to ask whether a store is configured on every request.
+    """
+
+    def add(self, note_id: str) -> None:
+        return None
+
+
+def create_app(
+    cfg: Config,
+    submit: Callable[[IncomingNote], None] | None = None,
+    processed: object | None = None,
+) -> FastAPI:
     app = FastAPI(title="handy-bridge")
     hand_off = submit or (lambda incoming: None)
+    # The same ProcessedIds the Drive poller reads. One recording can reach the
+    # bridge through both doors: the device confirms the WAV on Drive, fails on
+    # the sidecar, keeps the entry queued, and the next flush finds the bridge
+    # on the LAN and delivers here. Without this line, the copy left on Drive
+    # outlives the grace period and the poller writes the same recording a
+    # second time -- and notes are source, written once and never reconciled.
+    remember = processed if processed is not None else RemembersNothing()
 
     def describe(request: Request) -> str:
         return (
@@ -107,6 +130,9 @@ def create_app(cfg: Config, submit: Callable[[IncomingNote], None] | None = None
         # Acknowledge as soon as the audio is safely on disk; transcription is async
         # so the device can drop its radio instead of waiting on inference.
         hand_off(IncomingNote(note_id=note_id, wav_path=target, meta=parsed_meta))
+        # After the hand-off, not before: this records that the note exists, and
+        # it only exists once the worker owns it.
+        remember.add(note_id)
         log.info("accepted note %s (%.1fs)", note_id, info.duration_s)
         return JSONResponse({"id": note_id, "status": "accepted"}, status_code=200)
 

@@ -145,3 +145,50 @@ def test_network_error_on_token_exchange_does_not_leak_credentials():
     assert "rtok" not in str(caught.value)
     assert "csec" not in str(caught.value)
     assert "cid" not in str(caught.value)
+
+
+def test_the_listing_asks_for_the_page_token():
+    # Sem nextPageToken no `fields`, uma listagem truncada é indistinguível de
+    # uma completa: o Drive responde 200 com os primeiros N arquivos e nada
+    # mais, e o poller nunca fica sabendo que existe uma página seguinte.
+    seen = {}
+
+    def requester(method, url, **kw):
+        if url.endswith("/token"):
+            return FakeResponse(200, {"access_token": "at", "expires_in": 3599})
+        seen["params"] = kw.get("params")
+        return FakeResponse(200, {"files": []})
+
+    Drive(CFG, requester=requester).list_inbox()
+    assert "nextPageToken" in seen["params"]["fields"]
+
+
+def test_the_listing_follows_every_page():
+    # A pasta é desenhada para acumular: um delete que falha, uma cópia extra
+    # órfã e um sidecar sem par ficam lá para sempre. Passado o tamanho de uma
+    # página, uma listagem sem paginação devolveria só os mais antigos -- todos
+    # já processados -- e nenhuma gravação nova voltaria a aparecer.
+    pages = [
+        {
+            "files": [
+                {"id": "w1", "name": "a.wav", "createdTime": "2026-09-10T12:00:00.000Z"}
+            ],
+            "nextPageToken": "page-2",
+        },
+        {
+            "files": [
+                {"id": "w2", "name": "b.wav", "createdTime": "2026-09-10T12:01:00.000Z"}
+            ]
+        },
+    ]
+    tokens = []
+
+    def requester(method, url, **kw):
+        if url.endswith("/token"):
+            return FakeResponse(200, {"access_token": "at", "expires_in": 3599})
+        tokens.append(kw.get("params", {}).get("pageToken"))
+        return FakeResponse(200, pages[len(tokens) - 1])
+
+    files = Drive(CFG, requester=requester).list_inbox()
+    assert [f.id for f in files] == ["w1", "w2"]
+    assert tokens == [None, "page-2"]

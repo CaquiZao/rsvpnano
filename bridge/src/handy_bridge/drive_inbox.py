@@ -1,4 +1,5 @@
-"""Decide what files in a Drive folder are ready to become notes.
+"""Decide what files in a Drive folder are ready to become notes, and which
+of them are only taking up room in the listing.
 
 No network on purpose: these are the pairing and deadline rules, and keeping
 them away from I/O is what puts them under test, for the same reason the
@@ -9,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 
 WAV_SUFFIX = ".wav"
 SIDECAR_SUFFIX = ".json"
@@ -37,15 +39,38 @@ class ReadyNote:
     extra_copies: list[RemoteFile] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class InboxPlan:
+    ready: list[ReadyNote]
+    # Files nothing will ever read again, and which the caller must therefore
+    # delete: the folder does not drain by itself. A best-effort delete that
+    # failed, and an orphan sidecar that can never be paired, would otherwise
+    # sit in the listing forever -- and a listing full of them is how a new
+    # recording becomes invisible while the device has already dropped its
+    # only copy.
+    stale: list[RemoteFile]
+
+
+def note_id_of(name: str) -> str:
+    """The recording a Drive file name belongs to.
+
+    `Path(...).stem` rather than a slice, the same defence POST /v1/notes takes
+    on the uploaded file name: this value ends up interpolated into a path
+    under `audio_store`, and a name the device never wrote (the folder is the
+    user's own Drive) must not be able to point at another directory.
+    """
+    return Path(name).stem
+
+
 def plan_inbox(
     files: list[RemoteFile],
     processed_ids: set[str],
     now: datetime,
     grace_s: int = DEFAULT_GRACE_S,
-) -> list[ReadyNote]:
-    """Notes ready to process, oldest first."""
+) -> InboxPlan:
+    """What to turn into notes, oldest first, and what to delete."""
     sidecars = {
-        f.name[: -len(SIDECAR_SUFFIX)]: f
+        note_id_of(f.name): f
         for f in files
         if f.name.lower().endswith(SIDECAR_SUFFIX)
     }
@@ -60,18 +85,38 @@ def plan_inbox(
     for f in files:
         if not f.name.lower().endswith(WAV_SUFFIX):
             continue
-        wavs_by_note.setdefault(f.name[: -len(WAV_SUFFIX)], []).append(f)
+        wavs_by_note.setdefault(note_id_of(f.name), []).append(f)
 
     ready: list[ReadyNote] = []
+    stale: list[RemoteFile] = []
     for note_id, wavs in wavs_by_note.items():
-        if note_id in processed_ids:
-            continue
         wavs.sort(key=lambda w: w.created_at)
-        wav, *extra_copies = wavs
         sidecar = sidecars.get(note_id)
+        if note_id in processed_ids:
+            # This recording is already a note -- delivered by an earlier poll
+            # whose delete failed, or by POST /v1/notes, which records into the
+            # same store. Skipping it (what this did before) left it in the
+            # folder for good; reporting it is what drains the folder.
+            stale.extend(wavs)
+            if sidecar is not None:
+                stale.append(sidecar)
+            continue
+        wav, *extra_copies = wavs
         if sidecar is None and now - wav.created_at < grace:
             continue  # May be an upload in flight.
         ready.append(ReadyNote(note_id=note_id, wav=wav, sidecar=sidecar, extra_copies=extra_copies))
 
+    for note_id, sidecar in sidecars.items():
+        if note_id in wavs_by_note:
+            continue
+        # A sidecar with no .wav of its own is never going to become a note.
+        # Inside the grace period it could still be the half of a pair whose
+        # audio is mid-upload, and deleting it there would cost that note its
+        # anchor -- so it only becomes stale once the deadline has passed.
+        if note_id not in processed_ids and now - sidecar.created_at < grace:
+            continue
+        stale.append(sidecar)
+
     ready.sort(key=lambda r: r.wav.created_at)
-    return ready
+    stale.sort(key=lambda f: f.created_at)
+    return InboxPlan(ready=ready, stale=stale)

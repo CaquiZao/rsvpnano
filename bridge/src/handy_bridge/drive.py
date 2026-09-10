@@ -24,6 +24,9 @@ log = logging.getLogger(__name__)
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 FILES_URL = "https://www.googleapis.com/drive/v3/files"
 DEFAULT_TIMEOUT_S = 60
+# Quantos arquivos por página. O valor não decide o que é visto -- list_inbox
+# segue o nextPageToken até o fim --, só quantas chamadas isso custa.
+PAGE_SIZE = 200
 # Renova um pouco antes de expirar, para nenhuma chamada sair com token vencido
 # por causa de latência de rede.
 EXPIRY_MARGIN_S = 60
@@ -85,33 +88,53 @@ class Drive:
         return {"Authorization": f"Bearer {self.access_token()}"}
 
     def list_inbox(self) -> list[RemoteFile]:
-        try:
-            response = self._request(
-                "GET",
-                FILES_URL,
-                headers=self._headers(),
-                params={
-                    "q": f"'{self._cfg.folder_id}' in parents and trashed = false",
-                    "fields": "files(id,name,createdTime)",
-                    "pageSize": 200,
-                    "orderBy": "createdTime",
-                },
+        """Every file in the inbox folder, oldest first -- all of them.
+
+        Paginated on purpose, and `nextPageToken` asked for in `fields` for the
+        same reason: without it a truncated page is indistinguishable from a
+        complete listing, and the folder is designed to accumulate (a delete
+        that fails is best-effort by design, and so is the copy a retry
+        orphans). Once one page's worth of already-processed files piles up, an
+        unpaginated listing would answer with nothing but them -- and every new
+        recording would be invisible to the poller while the device, having
+        been told 2xx, had already deleted its only copy.
+        """
+        files: list[RemoteFile] = []
+        page_token: str | None = None
+        while True:
+            params = {
+                "q": f"'{self._cfg.folder_id}' in parents and trashed = false",
+                "fields": "nextPageToken,files(id,name,createdTime)",
+                "pageSize": PAGE_SIZE,
+                "orderBy": "createdTime",
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            try:
+                response = self._request(
+                    "GET", FILES_URL, headers=self._headers(), params=params
+                )
+            except Exception as exc:  # httpx raises a family of transport errors
+                # Never let the token reach a log line or an exception message.
+                raise DriveError(
+                    f"could not reach Google Drive files endpoint: {type(exc).__name__}"
+                ) from exc
+            if response.status_code != 200:
+                raise DriveError(_describe(response))
+            payload = response.json()
+            files.extend(
+                RemoteFile(
+                    id=str(item["id"]),
+                    name=str(item["name"]),
+                    created_at=datetime.fromisoformat(
+                        str(item["createdTime"]).replace("Z", "+00:00")
+                    ),
+                )
+                for item in payload.get("files", [])
             )
-        except Exception as exc:  # httpx raises a family of transport errors
-            # Never let the token reach a log line or an exception message.
-            raise DriveError(f"could not reach Google Drive files endpoint: {type(exc).__name__}") from exc
-        if response.status_code != 200:
-            raise DriveError(_describe(response))
-        return [
-            RemoteFile(
-                id=str(item["id"]),
-                name=str(item["name"]),
-                created_at=datetime.fromisoformat(
-                    str(item["createdTime"]).replace("Z", "+00:00")
-                ),
-            )
-            for item in response.json().get("files", [])
-        ]
+            page_token = payload.get("nextPageToken")
+            if not page_token:
+                return files
 
     def download(self, file_id: str) -> bytes:
         try:

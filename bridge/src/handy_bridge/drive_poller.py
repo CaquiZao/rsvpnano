@@ -77,9 +77,17 @@ class DrivePoller:
 
     def poll_once(self) -> int:
         """Entrega ao worker tudo que está pronto. Devolve quantas notas foram."""
-        ready = plan_inbox(self._drive.list_inbox(), self._state.snapshot(), self._now())
+        plan = plan_inbox(self._drive.list_inbox(), self._state.snapshot(), self._now())
+
+        # Primeiro o lixo, e antes de qualquer download: a pasta não se drena
+        # sozinha, e uma listagem entupida é o que faz uma gravação nova ficar
+        # invisível. Se um download abaixo falhar e abortar o poll, a limpeza
+        # já aconteceu.
+        for stale in plan.stale:
+            self._forget(stale.id)
+
         handed = 0
-        for note in ready:
+        for note in plan.ready:
             meta = {}
             if note.sidecar is not None:
                 try:
@@ -103,16 +111,22 @@ class DrivePoller:
             self._submit(IncomingNote(note_id=note.note_id, wav_path=target, meta=meta))
             handed += 1
             log.info("nota %s recebida pelo Drive", note.note_id)
-
-            remote_ids = [note.wav.id, *(f.id for f in note.extra_copies)]
-            if note.sidecar is not None:
-                remote_ids.append(note.sidecar.id)
-            for remote_id in remote_ids:
-                try:
-                    self._drive.delete(remote_id)
-                except Exception as exc:  # noqa: BLE001 - remover é melhor-esforço
-                    log.warning("não removi %s do Drive: %s", remote_id, exc)
+            self._purge(note)
         return handed
+
+    def _purge(self, note) -> None:
+        """Tira do Drive tudo que pertence a esta gravação."""
+        remote_ids = [note.wav.id, *(f.id for f in note.extra_copies)]
+        if note.sidecar is not None:
+            remote_ids.append(note.sidecar.id)
+        for remote_id in remote_ids:
+            self._forget(remote_id)
+
+    def _forget(self, remote_id: str) -> None:
+        try:
+            self._drive.delete(remote_id)
+        except Exception as exc:  # noqa: BLE001 - remover é melhor-esforço
+            log.warning("não removi %s do Drive: %s", remote_id, exc)
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="drive-poller", daemon=True)

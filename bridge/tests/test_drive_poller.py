@@ -1,4 +1,5 @@
 import json
+import struct
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -7,6 +8,24 @@ from handy_bridge.drive_inbox import RemoteFile
 from handy_bridge.drive_poller import DrivePoller, ProcessedIds
 
 NOW = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
+
+
+def wav_bytes(seconds: int = 2) -> bytes:
+    """Um WAV PCM que wav.inspect aceita, no formato que o device grava."""
+    data = b"\x00\x01" * (16000 * seconds)
+    return (
+        b"RIFF"
+        + struct.pack("<I", 36 + len(data))
+        + b"WAVE"
+        + b"fmt "
+        + struct.pack("<IHHIIHH", 16, 1, 1, 16000, 32000, 2, 16)
+        + b"data"
+        + struct.pack("<I", len(data))
+        + data
+    )
+
+
+WAV = wav_bytes(2)
 
 
 def make_cfg(tmp_path) -> Config:
@@ -52,7 +71,7 @@ def pair(created_at=NOW - timedelta(minutes=1)):
 
 def blobs(meta=None):
     payload = {"clock_synced": True, "recorded_at": "2026-09-10T12:00:00"} if meta is None else meta
-    return {"w1": b"RIFFxxxx", "s1": json.dumps(payload).encode("utf-8")}
+    return {"w1": WAV, "s1": json.dumps(payload).encode("utf-8")}
 
 
 def test_hands_a_ready_note_to_the_worker(tmp_path):
@@ -74,7 +93,7 @@ def test_writes_the_audio_where_the_http_route_writes_it(tmp_path):
     poller = DrivePoller(cfg, drive, lambda n: None, ProcessedIds(tmp_path / "seen.json"),
                          now=lambda: NOW)
     poller.poll_once()
-    assert (cfg.audio_store / "20260910-120000.wav").read_bytes() == b"RIFFxxxx"
+    assert (cfg.audio_store / "20260910-120000.wav").read_bytes() == WAV
 
 
 def test_removes_both_files_from_the_drive_after_handing_over(tmp_path):
@@ -132,8 +151,8 @@ def test_the_poller_deletes_extra_copies_along_with_the_wav_and_sidecar(tmp_path
         RemoteFile("s1", "20260910-120000.json", NOW - timedelta(minutes=1)),
     ]
     blob = {
-        "w1": b"RIFFxxxx",
-        "w2": b"RIFFyyyy",
+        "w1": WAV,
+        "w2": wav_bytes(3),
         "s1": json.dumps({"clock_synced": True}).encode("utf-8"),
     }
     drive = FakeDrive(files, blob)
@@ -147,7 +166,7 @@ def test_the_poller_deletes_extra_copies_along_with_the_wav_and_sidecar(tmp_path
 def test_an_unreadable_sidecar_does_not_cost_the_note(tmp_path):
     cfg = make_cfg(tmp_path)
     submitted = []
-    bad = {"w1": b"RIFFxxxx", "s1": b"{nao e json"}
+    bad = {"w1": WAV, "s1": b"{nao e json"}
     poller = DrivePoller(cfg, FakeDrive(pair(), bad), submitted.append,
                          ProcessedIds(tmp_path / "seen.json"), now=lambda: NOW)
 
@@ -172,3 +191,38 @@ def test_nothing_ready_means_nothing_submitted(tmp_path):
                          ProcessedIds(tmp_path / "seen.json"), now=lambda: NOW)
     assert poller.poll_once() == 0
     assert submitted == []
+
+
+def test_the_poller_drains_what_it_will_never_process_again(tmp_path):
+    # O delete é melhor-esforço, então sobra lixo: um par já processado que
+    # não foi removido, e um sidecar órfão que plan_inbox nunca vai casar. Com
+    # ~200 desses a listagem satura e gravação nova nenhuma volta a aparecer.
+    cfg = make_cfg(tmp_path)
+    files = [
+        RemoteFile("w1", "20260910-120000.wav", NOW - timedelta(minutes=10)),
+        RemoteFile("s1", "20260910-120000.json", NOW - timedelta(minutes=10)),
+        RemoteFile("s9", "20260910-110000.json", NOW - timedelta(minutes=60)),
+    ]
+    drive = FakeDrive(files, blobs())
+    state = ProcessedIds(tmp_path / "seen.json")
+    state.add("20260910-120000")
+    submitted = []
+    poller = DrivePoller(cfg, drive, submitted.append, state, now=lambda: NOW)
+
+    assert poller.poll_once() == 0
+    assert submitted == []
+    assert sorted(drive.deleted) == ["s1", "s9", "w1"]
+
+
+def test_a_hostile_drive_file_name_stays_inside_the_audio_store(tmp_path):
+    cfg = make_cfg(tmp_path)
+    files = [
+        RemoteFile("w1", "../../../evil.wav", NOW - timedelta(minutes=10)),
+        RemoteFile("s1", "../../../evil.json", NOW - timedelta(minutes=10)),
+    ]
+    drive = FakeDrive(files, {"w1": WAV, "s1": json.dumps({"clock_synced": True}).encode("utf-8")})
+    poller = DrivePoller(cfg, drive, lambda n: None, ProcessedIds(tmp_path / "seen.json"),
+                         now=lambda: NOW)
+    poller.poll_once()
+    assert (cfg.audio_store / "evil.wav").exists()
+    assert not (tmp_path.parent / "evil.wav").exists()

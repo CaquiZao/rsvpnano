@@ -104,13 +104,15 @@ def main(argv: list[str] | None = None) -> int:
     worker.start()
 
     drive_poller = None
+    # One store for both entrances. A recording can arrive twice -- the Drive
+    # upload confirms the WAV, fails on the sidecar, and the next flush finds
+    # the bridge on the LAN -- and the note_id POST /v1/notes records here is
+    # what stops the copy left on Drive from becoming a second note in the
+    # vault. Only the Drive route ever reads it, so it is only built when the
+    # fallback is on; with it off, create_app keeps nothing.
+    drive_seen = ProcessedIds(cfg.audio_store / "drive-seen.json") if cfg.drive.enabled else None
     if cfg.drive.enabled:
-        drive_poller = DrivePoller(
-            cfg,
-            Drive(cfg.drive),
-            worker.submit,
-            ProcessedIds(cfg.audio_store / "drive-seen.json"),
-        )
+        drive_poller = DrivePoller(cfg, Drive(cfg.drive), worker.submit, drive_seen)
         drive_poller.start()
         logging.getLogger(__name__).info(
             "Drive fallback enabled, polling every %ds", cfg.drive.poll_s
@@ -121,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     announcer = AddressWatcher(cfg.port)
     announcer.start()
 
-    app = create_app(cfg, submit=worker.submit)
+    app = create_app(cfg, submit=worker.submit, processed=drive_seen)
     try:
         uvicorn.run(app, host="0.0.0.0", port=cfg.port, log_config=None)
     finally:
