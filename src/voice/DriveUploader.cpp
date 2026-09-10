@@ -263,17 +263,17 @@ bP6MvPJwNQzcmRk13NfIRmPVNnGuV/u3gm3c
             const int status = readStatusCode(client);
             client.stop();
 
-            if (status >= 200 && status < 300) {
+            const DriveResult outcome = driveResultForStatus(status);
+            if (outcome == DriveResult::Sent) {
                 ESP_LOGI(kTag, "uploaded %s to Drive (%u bytes)", filename.c_str(),
                          static_cast<unsigned>(contentBytes));
-                return DriveResult::Sent;
-            }
-            if (status == 401 || status == 403) {
+            } else if (outcome == DriveResult::Unauthorized) {
+                // Token, permissão, ou a pasta -- o que o usuário pode corrigir.
                 ESP_LOGW(kTag, "Drive rejected %s with %d", filename.c_str(), status);
-                return DriveResult::Unauthorized;
+            } else {
+                ESP_LOGW(kTag, "upload of %s got %d", filename.c_str(), status);
             }
-            ESP_LOGW(kTag, "upload of %s got %d", filename.c_str(), status);
-            return DriveResult::Retry;
+            return outcome;
         }
 
     } // namespace

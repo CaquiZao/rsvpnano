@@ -101,6 +101,20 @@ namespace voice {
         return true;
     }
 
+    DriveResult driveResultForStatus(int status) {
+        if (status >= 200 && status < 300)
+            return DriveResult::Sent;
+        switch (status) {
+        case 400: // requisição que o Drive não vai aceitar como está
+        case 401: // token
+        case 403: // permissão
+        case 404: // folder_id errado ou apagado
+            return DriveResult::Unauthorized;
+        default:
+            return DriveResult::Retry;
+        }
+    }
+
     std::string uploadMetadata(std::string_view name, std::string_view folderId) {
         // Hand-built rather than through glaze: one line, one field that needs
         // escaping. The folder id is a Google-issued opaque id, never user text, so it

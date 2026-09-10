@@ -3,6 +3,8 @@
 #include <string>
 #include <string_view>
 
+#include "voice/VoiceQueuePlan.h"
+
 namespace voice {
 
     // The four secrets `/config/drive.toml` must carry for the device to speak to the
@@ -43,6 +45,20 @@ namespace voice {
     // is streamed from the card rather than copied into RAM.
     std::string uploadHeader(std::string_view boundary, std::string_view metadata, std::string_view contentType);
     std::string uploadFooter(std::string_view boundary);
+
+    // What an upload's HTTP status line means for the queue. Pure, and here rather
+    // than inside the uploader for the same reason actionFor() is in VoiceQueuePlan:
+    // only real hardware could reach it there, and this mapping is what the screen
+    // ends up telling the user.
+    //
+    // 400 and 404 are Unauthorized, not Retry: 404 is the folder_id wrong or deleted
+    // and 400 is a request Drive will never accept as written. Both used to fall into
+    // the catch-all Retry, which VoiceService renders as "sem internet" -- sending
+    // the user to check a router over a configuration mistake. They still Keep the
+    // note (see actionFor(DriveResult)): the recording is fine, only the setup isn't.
+    // A status this function never saw (including readStatusCode's -1) is Retry,
+    // because nothing was said about the note.
+    DriveResult driveResultForStatus(int status);
 
     // Fixed rather than random, same reasoning as VoiceUploadBody's kBoundary: this
     // runs to one known API over TLS, and a constant makes a failing upload

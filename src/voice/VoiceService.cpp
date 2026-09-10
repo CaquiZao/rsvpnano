@@ -197,7 +197,11 @@ namespace voice {
                     // land in; which message depends on what actually failed.
                     switch (result) {
                     case DriveResult::Unauthorized:
-                        lastError_ = "Drive recusou: token";
+                        // A pasta entra aqui junto com o token: um folder_id
+                        // errado ou apagado responde 404, e dizer "sem
+                        // internet" mandaria o usuario olhar o roteador por um
+                        // erro que esta no config.
+                        lastError_ = "Drive recusou: token ou pasta";
                         break;
                     case DriveResult::NoInternet:
                     case DriveResult::Retry:

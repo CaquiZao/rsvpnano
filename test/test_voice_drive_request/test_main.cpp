@@ -96,6 +96,43 @@ namespace {
         TEST_ASSERT_NOT_NULL(strstr(foot.c_str(), "--"));
     }
 
+    void test_a_confirmed_upload_is_sent() {
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(voice::DriveResult::Sent),
+                              static_cast<int>(voice::driveResultForStatus(200)));
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(voice::DriveResult::Sent),
+                              static_cast<int>(voice::driveResultForStatus(201)));
+    }
+
+    void test_a_wrong_or_deleted_folder_is_not_a_network_problem() {
+        // 404 é o folder_id errado ou apagado, e 400 é a requisição que o
+        // Drive nunca vai aceitar como está. Os dois caíam no Retry
+        // genérico, que a tela traduzia para "sem internet" -- mandando o
+        // usuário olhar o roteador por um erro de configuração. É essa
+        // classe de mentira que este recurso existe para eliminar.
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(voice::DriveResult::Unauthorized),
+                              static_cast<int>(voice::driveResultForStatus(400)));
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(voice::DriveResult::Unauthorized),
+                              static_cast<int>(voice::driveResultForStatus(404)));
+    }
+
+    void test_a_token_refusal_is_unauthorized() {
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(voice::DriveResult::Unauthorized),
+                              static_cast<int>(voice::driveResultForStatus(401)));
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(voice::DriveResult::Unauthorized),
+                              static_cast<int>(voice::driveResultForStatus(403)));
+    }
+
+    void test_a_transient_answer_is_retried() {
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(voice::DriveResult::Retry),
+                              static_cast<int>(voice::driveResultForStatus(429)));
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(voice::DriveResult::Retry),
+                              static_cast<int>(voice::driveResultForStatus(500)));
+        // -1 é o que readStatusCode devolve quando não conseguiu ler a linha
+        // de status: nada foi dito sobre a nota.
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(voice::DriveResult::Retry),
+                              static_cast<int>(voice::driveResultForStatus(-1)));
+    }
+
 } // namespace
 
 int main(int, char**) {
@@ -110,5 +147,9 @@ int main(int, char**) {
     RUN_TEST(test_an_error_response_yields_no_token);
     RUN_TEST(test_the_upload_metadata_names_the_file_and_its_folder);
     RUN_TEST(test_the_multipart_related_body_carries_metadata_then_content);
+    RUN_TEST(test_a_confirmed_upload_is_sent);
+    RUN_TEST(test_a_wrong_or_deleted_folder_is_not_a_network_problem);
+    RUN_TEST(test_a_token_refusal_is_unauthorized);
+    RUN_TEST(test_a_transient_answer_is_retried);
     return UNITY_END();
 }
