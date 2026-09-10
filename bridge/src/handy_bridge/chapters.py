@@ -135,7 +135,17 @@ def passage(
         return body
 
     words = body.split()
-    within = max(0, int(from_offset) - index.start_of(chapter))
+    start = index.start_of(chapter)
+    # Only trust the window when the device's offset lands inside this chapter by
+    # the bridge's own counting. Measured on the real vault, the two counts differ
+    # by roughly a factor of two — offset 12438 estimates chapter 4 where matching
+    # the excerpt places it in chapter 8. When the scales disagree, slicing would
+    # produce a plausible-looking window that cuts off text that was in fact read,
+    # which is worse than comparing against the whole chapter.
+    if not start <= int(from_offset) <= start + len(words):
+        return body
+
+    within = int(from_offset) - start
     if within >= len(words):
         return body
     return " ".join(words[within : within + length])

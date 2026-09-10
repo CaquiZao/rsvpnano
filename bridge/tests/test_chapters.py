@@ -187,6 +187,20 @@ def test_passage_with_an_inverted_window_gives_the_whole_chapter():
     assert got == WORDS
 
 
+def test_passage_ignores_an_offset_from_a_different_scale():
+    # Medido no vault real: as contagens do device e do bridge divergem por quase
+    # o dobro. Um offset fora da faixa do capitulo significa que as escalas nao
+    # concordam, e recortar produziria uma janela plausivel que corta texto lido.
+    got = chapters_mod.passage(PASSAGE_IDX, chapter=2, from_offset=99999, to_offset=100050)
+    assert got == WORDS
+
+
+def test_passage_still_slices_when_the_offset_fits_the_chapter():
+    # Capitulo 2 ocupa 100..200 na contagem do bridge, entao 150 e plausivel.
+    got = chapters_mod.passage(PASSAGE_IDX, chapter=2, from_offset=150, to_offset=160)
+    assert len(got.split()) == 10
+
+
 def test_passage_for_an_unknown_chapter_is_empty():
     assert chapters_mod.passage(PASSAGE_IDX, chapter=99, from_offset=0, to_offset=1) == ""
 
