@@ -39,9 +39,9 @@ namespace voice {
     // a nota, e um 401 do Drive é um problema de token que não diz nada sobre
     // ela.
     enum class DriveResult : uint8_t {
-        Sent,          // upload confirmado, com file id
+        Sent,          // 2xx: o Drive confirmou a durabilidade na linha de status
         Retry,         // 429, 5xx, ou falha de rede
-        Unauthorized,  // 401/403: token ou permissão
+        Unauthorized,  // 400/401/403/404: token, permissão ou pasta
         NoInternet,    // não deu para falar com o Google
     };
 

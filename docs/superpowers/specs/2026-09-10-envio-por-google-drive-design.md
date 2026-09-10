@@ -87,9 +87,13 @@ O consentimento acontece **uma vez, no PC**: o bridge ganha um comando que abre 
 usuário aprova com a conta acima, e o resultado é um refresh token. Não há tela de código no
 device.
 
-O device recebe o mesmo refresh token num arquivo no cartão — `/config/drive.json`, com
+O device recebe o mesmo refresh token num arquivo no cartão — `/config/drive.toml`, com
 `client_id`, `client_secret`, `refresh_token` e o id da pasta de destino. O caminho de escrita é a
 transferência USB que o projeto já tem, o mesmo precedente do `/config/bridge.txt`.
+
+**TOML, não JSON** (esta seção dizia `drive.json`): todo config que este firmware *lê* é TOML,
+lido com glaze; ele escreve JSON (o sidecar da nota), mas nunca leu JSON de configuração, e abrir
+essa exceção custaria um segundo parser no device para nada.
 
 O device troca refresh token por access token num `POST` simples a cada flush (sem criptografia
 além do TLS) e usa o access token no upload.
@@ -117,10 +121,21 @@ confirmada apaga áudio" continua valendo, num lugar só.
 | Resultado | O que significa | Ação na fila |
 |---|---|---|
 | Bridge recusou (4xx na LAN) | O bridge julgou **a nota** | `Park` — sai da fila, fica no cartão como `.parked` |
-| Drive 2xx com file id | A nota está durável no Drive do usuário | `Delete` |
-| Drive 401 / 403 | Token ou permissão. **Nada** sobre a nota | `Keep` + erro legível ("Drive: token expirou") |
+| Drive 2xx | A nota está durável no Drive do usuário | `Delete` |
+| Drive 400 / 401 / 403 / 404 | Token, permissão ou pasta. **Nada** sobre a nota | `Keep` + erro legível ("Drive recusou: token ou pasta") |
 | Drive 429 / 5xx | Transitório | `Keep` |
 | Falha de rede em qualquer rota | Transitório | `Keep` |
+
+**Qualquer 2xx, e não "2xx com file id"** (esta tabela dizia com file id): o device lê apenas a
+linha de status da resposta e nunca o corpo — drenar o JSON do Drive custaria tempo de rádio por
+um file id que nada no device usa. O que confirma a durabilidade é o status; o `Delete` depende
+dele e de mais nada.
+
+**400 e 404 ficam com o 401/403, não com os transitórios.** Um 404 é o `folder_id` errado ou
+apagado e um 400 é uma requisição que o Drive não vai aceitar como está; mandados para o `Retry`
+genérico, a tela dizia "sem internet" e o usuário ia procurar o problema no roteador. Nenhum dos
+quatro estaciona a nota: o problema é configuração, que o usuário corrige, e a gravação continua
+na fila.
 
 Um 403 do Drive **não** estaciona a nota: estacionar diria que a gravação é ruim, quando o problema
 é configuração. A nota fica na fila e sobe quando o token for corrigido.
@@ -137,8 +152,13 @@ Então o erro passa a nomear a rota que falhou e por quê, em vez de culpar a re
 |---|---|
 | Bridge não achado, Drive não configurado | "Bridge fora da rede; Drive não configurado" |
 | Bridge não achado, sem internet | "Bridge fora da rede; sem internet" |
-| Bridge não achado, Drive recusou o token | "Drive recusou: token" |
+| Bridge não achado, Drive recusou o token | "Drive recusou: token ou pasta" |
+| Bridge não achado, Drive configurado com a pasta errada | "Drive recusou: token ou pasta" |
 | Bridge achado, envio caiu no meio | "Envio falhou" (inalterado) |
+
+As duas linhas do meio dizem a mesma coisa de propósito: do device, um 401 e um 404 são o mesmo
+tipo de problema — o config está errado e está no cartão —, e a tela não tem espaço para explicar
+qual dos dois campos é. O que ela não pode fazer é culpar a rede.
 
 São strings e um enum, não arquitetura, mas é o que separa "não sei o que houve" de "sei o que
 fazer".
@@ -160,8 +180,26 @@ bem dentro dele.
 
 **Deduplicação.** Se o bridge processar a nota e a remoção no Drive falhar, o poll seguinte criaria
 uma segunda nota — notas são fonte, escritas uma vez, nunca reescritas, então nada as reconciliaria.
-O bridge guarda os file ids já processados num arquivo de estado no `audio_store`, no mesmo padrão
-de `threads.json` e `digest.json`. O id do Drive é a chave, não o nome do arquivo.
+O bridge guarda num arquivo de estado no `audio_store`, no mesmo padrão de `threads.json` e
+`digest.json`, os **`note_id`** já processados — o stem do arquivo.
+
+**A chave é o stem, não o file id do Drive** (esta seção dizia o contrário, e o contrário não
+funciona): `files.create` cunha um id novo a cada chamada e o Drive não impede nomes repetidos,
+então as duas tentativas de subir **uma** gravação — a primeira, que confirmou o `.wav` e falhou no
+sidecar, e o retry — têm ids diferentes e o mesmo stem. Marcado por file id, o retry passaria como
+gravação nova e viraria a segunda nota que este parágrafo existe para evitar. Só o stem identifica
+a gravação.
+
+E é o mesmo registro para as duas portas de entrada: o `POST /v1/notes` grava o `note_id` depois
+de entregar a nota ao worker. Sem isso, a gravação cuja cópia ficou no Drive (WAV confirmado,
+sidecar falhou) entrava pela LAN no flush seguinte e voltava pelo Drive depois da carência — duas
+notas, e `_unique_path` faz da segunda um arquivo novo, não uma sobrescrita.
+
+**A pasta não se drena sozinha.** A remoção é melhor-esforço, o retry deixa cópia órfã, e um
+sidecar sem `.wav` nunca vira nota. Por isso a listagem é paginada (`nextPageToken` seguido até o
+fim) e `plan_inbox` também reporta o que deve ser apagado: os arquivos de um `note_id` já
+processado e o sidecar órfão passada a carência. Sem as duas coisas, uma página de itens velhos
+esconde as gravações novas — e o device já apagou a dele.
 
 ## 8. Lado do device
 
@@ -178,7 +216,9 @@ de `threads.json` e `digest.json`. O id do Drive é a chave, não o nome do arqu
 - **`src/handy_bridge/drive.py`** (novo): refresh de token, listar pasta, baixar, remover. Um
   transporte injetável, para os testes rodarem sem rede.
 - **`src/handy_bridge/drive_poller.py`** (novo): thread que faz poll a cada **30 s** por padrão,
-  seleciona pares completos, deduplica por file id e chama `worker.submit()`. Trinta segundos
+  seleciona pares completos, deduplica por `note_id` (ver 7), aplica as mesmas três validações do
+  `POST /v1/notes` — meta parseável, `wav.inspect`, duração mínima —, apaga o que o plano reporta
+  como lixo e chama `worker.submit()`. Trinta segundos
   porque a rota de queda já é a lenta: o gargalo é o upload do device, não a espera do poll, e um
   intervalo curto multiplicaria chamadas de API sem encurtar nada perceptível.
 - **`src/handy_bridge/config.py`**: seção `[drive]` — credenciais, id da pasta, intervalo
@@ -191,10 +231,12 @@ de `threads.json` e `digest.json`. O id do Drive é a chave, não o nome do arqu
 
 Tudo offline, sem hardware, sem rede e sem gastar tokens — como o resto da suíte.
 
-**Bridge:** `drive.py` com transporte dublê (refresh, list, download, delete, e os erros 401/429);
-o poller pegando só par completo, deduplicando por file id, e tratando remoção que falha sem criar
-nota dupla; e um teste de que nota vinda do Drive percorre a pipeline atual com os dublês
-existentes, produzindo a mesma nota que o `POST /v1/notes` produziria.
+**Bridge:** `drive.py` com transporte dublê (refresh, list, download, delete, a paginação e os
+erros 401/429); o poller pegando só par completo, deduplicando por `note_id`, e tratando remoção
+que falha sem criar nota dupla; e um teste de que nota vinda do Drive percorre a pipeline atual com
+os dublês existentes, produzindo a mesma nota que o `POST /v1/notes` produziria — comparando as
+duas notas, não apenas verificando que uma chegou, que é o que teria pego a divergência de
+validação entre as duas portas.
 
 **Device:** `actionFor()` para cada resultado de Drive da tabela em 6; e o `DriveRequest` montando
 refresh e upload, com resposta de erro e de sucesso.
@@ -206,7 +248,7 @@ refresh e upload, com resposta de erro e de sucesso.
   rádio por mais tempo que a LAN. A rota rápida continua sendo a primeira tentada.
 - **A promessa do README fica mais estreita.** Ver 3. Corrigir o texto é parte do trabalho, não
   nota de rodapé.
-- **Credencial no cartão.** O refresh token fica legível em `/config/drive.json` no SD. Quem tem o
+- **Credencial no cartão.** O refresh token fica legível em `/config/drive.toml` no SD. Quem tem o
   cartão tem acesso de escrita à pasta do app no Drive — não ao resto, pelo escopo `drive.file`.
 
 ## 12. Fora de escopo

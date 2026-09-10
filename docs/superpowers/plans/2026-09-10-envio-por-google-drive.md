@@ -17,9 +17,14 @@
 - **Só entrega confirmada apaga áudio.** Todo resultado de transporte passa por `actionFor()` em `VoiceQueuePlan`, que é o único lugar onde se decide destruir uma gravação.
 - **A queda para o Drive dispara só quando nenhum endpoint de bridge foi encontrado.** Nunca quando um endpoint foi achado e o envio falhou no meio — o bridge pode ter recebido, e subir a mesma nota pelo Drive criaria nota duplicada.
 - **O device sobe o `.wav` primeiro e o `.json` por último.** O bridge só considera pronto um `.wav` que já tenha `.json`, ou que esteja sem sidecar há mais de 5 minutos.
-- **Deduplicação por file id do Drive**, nunca por nome de arquivo.
+- **Deduplicação pelo `note_id`** — o stem do arquivo —, **não pelo file id do Drive** (esta linha
+  dizia o contrário até a revisão final). `files.create` cunha um id novo a cada chamada e o Drive
+  não impede nomes repetidos: as duas tentativas de subir uma gravação têm ids diferentes e o mesmo
+  stem, então só o stem identifica a gravação. E é **um único registro para as duas portas de
+  entrada** — o `POST /v1/notes` grava o `note_id` que ele aceitou —, senão a mesma gravação
+  entregue pela LAN volta pelo Drive e vira uma segunda nota.
 - **TLS no device valida o certificado** (CA raiz do Google pinada). Isto **divirge de propósito** do `OtaUpdater.cpp`, que usa `setInsecure()`: aqui trafega um refresh token, e `setInsecure()` o entregaria a qualquer um na rede.
-- **Config do device é TOML**, lido com glaze como o resto (`glz::opts{.format = glz::TOML}`). A spec diz `drive.json`; o arquivo é `/config/drive.toml` para seguir o padrão do repo — o device escreve JSON à mão, mas nunca lê JSON de config.
+- **Config do device é TOML**, lido com glaze como o resto (`glz::opts{.format = glz::TOML}`). O arquivo é `/config/drive.toml`, para seguir o padrão do repo — o device escreve JSON à mão, mas nunca lê JSON de config. A spec dizia `drive.json` e foi corrigida na revisão final.
 - **Testes rodam sem hardware, sem rede e sem gastar tokens.** HTTP é dublado injetando um callable, como `tests/test_telegram.py` já faz.
 - Testes nativos: `PLATFORMIO_BUILD_DIR=<fora do OneDrive> pio test -e native_test -f <dir>`.
 
@@ -1376,9 +1381,9 @@ Em `VoiceQueuePlan.h`, depois de `UploadResult`:
     // a nota, e um 401 do Drive é um problema de token que não diz nada sobre
     // ela.
     enum class DriveResult : uint8_t {
-        Sent,          // upload confirmado, com file id
+        Sent,          // 2xx: o Drive confirmou a durabilidade na linha de status
         Retry,         // 429, 5xx, ou falha de rede
-        Unauthorized,  // 401/403: token ou permissão
+        Unauthorized,  // 400/401/403/404: token, permissão ou pasta
         NoInternet,    // não deu para falar com o Google
     };
 
