@@ -12,6 +12,18 @@
     "typeface": "literata"
   },
   {
+    "id": "ametista",
+    "name": "Ametista",
+    "file": "ametista.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "ayu-dark",
+    "name": "Ayu Dark",
+    "file": "ayu-dark.toml",
+    "typeface": "literata"
+  },
+  {
     "id": "catppuccin-frappe",
     "name": "Catppuccin Frappe",
     "file": "catppuccin-frappe.toml",
@@ -36,9 +48,21 @@
     "typeface": "literata"
   },
   {
+    "id": "catppuccin-mocha-hc",
+    "name": "Catppuccin Mocha Contraste",
+    "file": "catppuccin-mocha-hc.toml",
+    "typeface": "literata"
+  },
+  {
     "id": "dracula",
     "name": "Dracula",
     "file": "dracula.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "dracula-hc",
+    "name": "Dracula Contraste",
+    "file": "dracula-hc.toml",
     "typeface": "literata"
   },
   {
@@ -46,6 +70,12 @@
     "name": "Dyslexic",
     "file": "dyslexic.toml",
     "typeface": "opendyslexic"
+  },
+  {
+    "id": "esmeralda",
+    "name": "Esmeralda",
+    "file": "esmeralda.toml",
+    "typeface": "literata"
   },
   {
     "id": "fosforo",
@@ -63,6 +93,24 @@
     "id": "gruvbox-dark",
     "name": "Gruvbox Dark",
     "file": "gruvbox-dark.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "gruvbox-dark-hc",
+    "name": "Gruvbox Dark Contraste",
+    "file": "gruvbox-dark-hc.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "indigo",
+    "name": "Índigo",
+    "file": "indigo.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "kanagawa",
+    "name": "Kanagawa",
+    "file": "kanagawa.toml",
     "typeface": "literata"
   },
   {
@@ -84,6 +132,30 @@
     "typeface": "literata"
   },
   {
+    "id": "nord-hc",
+    "name": "Nord Contraste",
+    "file": "nord-hc.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "obsidiana",
+    "name": "Obsidiana",
+    "file": "obsidiana.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "one-dark",
+    "name": "One Dark",
+    "file": "one-dark.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "oxocarbon",
+    "name": "Oxocarbon",
+    "file": "oxocarbon.toml",
+    "typeface": "literata"
+  },
+  {
     "id": "papel",
     "name": "Papel",
     "file": "papel.toml",
@@ -102,9 +174,21 @@
     "typeface": "literata"
   },
   {
+    "id": "rose-pine",
+    "name": "Rosé Pine",
+    "file": "rose-pine.toml",
+    "typeface": "literata"
+  },
+  {
     "id": "solarized-dark",
     "name": "Solarized Dark",
     "file": "solarized-dark.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "synthwave",
+    "name": "Synthwave",
+    "file": "synthwave.toml",
     "typeface": "literata"
   },
   {
@@ -123,6 +207,12 @@
     "id": "tokyo-night-hc",
     "name": "Tokyo Night Contraste",
     "file": "tokyo-night-hc.toml",
+    "typeface": "literata"
+  },
+  {
+    "id": "vinho",
+    "name": "Vinho",
+    "file": "vinho.toml",
     "typeface": "literata"
   }
 ]
