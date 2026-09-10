@@ -119,12 +119,21 @@ bP6MvPJwNQzcmRk13NfIRmPVNnGuV/u3gm3c
             const int status = http.POST(String(body.c_str()));
 
             if (status < 0) {
-                // A negative return is HTTPClient's own error code (refused, timed
-                // out, TLS handshake failed...): the connection never became a
-                // request-response exchange at all.
-                ESP_LOGW(kTag, "token refresh could not connect: %s", HTTPClient::errorToString(status).c_str());
+                // A negative return is HTTPClient's own error code. Most of them mean
+                // the connection never became a request-response exchange at all
+                // (refused, no route, TLS handshake failed) -- that is NoInternet.
+                // CONNECTION_LOST and READ_TIMEOUT are different: both only happen
+                // after a connection did open, so Retry is the honest answer -- and
+                // it matters here specifically, because a handshake failure from a
+                // rotated GTS Root R1 or an active MITM must not be reported as
+                // "no internet", which would send the user to check their router for
+                // a problem that is not there.
+                ESP_LOGW(kTag, "token refresh could not connect: %s (%d)", HTTPClient::errorToString(status).c_str(),
+                         status);
                 http.end();
-                failure = DriveResult::NoInternet;
+                failure = (status == HTTPC_ERROR_CONNECTION_LOST || status == HTTPC_ERROR_READ_TIMEOUT)
+                    ? DriveResult::Retry
+                    : DriveResult::NoInternet;
                 return std::nullopt;
             }
             if (status == 400 || status == 401 || status == 403) {
@@ -184,7 +193,12 @@ bP6MvPJwNQzcmRk13NfIRmPVNnGuV/u3gm3c
             WiFiClientSecure client;
             client.setCACert(kGoogleRootCa);
             client.setHandshakeTimeout(kHandshakeTimeoutS);
-            client.setTimeout(kConnectTimeoutMs / 1000);
+            // No client.setTimeout() here: it takes milliseconds, and
+            // kConnectTimeoutMs / 1000 (copied from VoiceUploader.cpp, which passes
+            // its own kConnectTimeoutMs / 1000 to the same call) would set it to 4 ms,
+            // not 4 s -- readStringUntil could then return a partial status line and
+            // manufacture a spurious Retry. readStatusCode already has its own
+            // deadline below, so nothing here needs a second one.
             if (!client.connect(kUploadHost, kHttpsPort, kConnectTimeoutMs)) {
                 file.close();
                 ESP_LOGW(kTag, "could not reach Drive to upload %s", filename.c_str());
@@ -214,7 +228,12 @@ bP6MvPJwNQzcmRk13NfIRmPVNnGuV/u3gm3c
             std::vector<uint8_t> chunk(kChunkBytes);
             size_t sent = 0;
             while (sent < contentBytes) {
-                const size_t read = file.read(chunk.data(), chunk.size());
+                // Clamped to what is left: an unclamped read could put up to one
+                // full chunk more on the wire than Content-Length promised if the
+                // file grew after `contentBytes` was captured, and Drive would then
+                // have a complete, valid body before the mismatch is ever noticed.
+                const size_t toRead = std::min(chunk.size(), contentBytes - sent);
+                const size_t read = file.read(chunk.data(), toRead);
                 if (read == 0) {
                     break;
                 }
