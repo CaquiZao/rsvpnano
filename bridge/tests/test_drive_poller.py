@@ -1,5 +1,6 @@
 import json
 import struct
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -279,3 +280,45 @@ def test_a_hostile_drive_file_name_stays_inside_the_audio_store(tmp_path):
     poller.poll_once()
     assert (cfg.audio_store / "evil.wav").exists()
     assert not (tmp_path.parent / "evil.wav").exists()
+
+
+def test_many_threads_recording_at_once_all_survive_in_the_file(tmp_path):
+    # Dois fios escrevem neste store: a thread do poller e o event loop do
+    # uvicorn, com a mesma instância (__main__.py passa uma só). Sem lock e com
+    # um `.tmp` fixo os dois escreviam o mesmo arquivo temporário e o perdedor
+    # do replace levantava FileNotFoundError (PermissionError no Windows) --
+    # depois de a nota já ter sido entregue -- ou deixava um JSON curto por
+    # cima do prefixo de um mais longo, que no boot seguinte não é lido e
+    # reprocessa a pasta inteira.
+    state = ProcessedIds(tmp_path / "seen.json")
+    ids = [f"boot-{i:08d}" for i in range(200)]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(state.add, ids))
+
+    assert state.snapshot() == set(ids)
+    assert json.loads((tmp_path / "seen.json").read_text(encoding="utf-8")) == sorted(ids)
+    # Nenhum temporario sobrando na pasta de estado.
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+class RecusaGravar:
+    """Um store cuja escrita falha: disco cheio, permissao, corrida."""
+
+    def snapshot(self):
+        return set()
+
+    def add(self, note_id):
+        raise OSError("disco cheio")
+
+
+def test_a_state_file_that_cannot_be_written_does_not_undo_a_refusal(tmp_path):
+    # No _refuse a gravação já está segura em rejected/: registrar que ela foi
+    # processada é contabilidade, e uma falha aí não pode abortar o poll nem
+    # deixar o arquivo no Drive para ser recusado a cada 30 segundos.
+    cfg = make_cfg(tmp_path)
+    drive = FakeDrive(pair(), {"w1": WAV, "s1": b"{nao e json"})
+    poller = DrivePoller(cfg, drive, lambda n: None, RecusaGravar(), now=lambda: NOW)
+
+    assert poller.poll_once() == 0
+    assert (cfg.audio_store / "rejected" / "20260910-120000.wav").read_bytes() == WAV
+    assert sorted(drive.deleted) == ["s1", "w1"]

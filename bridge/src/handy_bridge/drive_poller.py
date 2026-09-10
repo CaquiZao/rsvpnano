@@ -13,12 +13,13 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+from uuid import uuid4
 
 from handy_bridge import wav as wav_mod
 from handy_bridge.config import Config
 from handy_bridge.drive_inbox import plan_inbox
 from handy_bridge.pipeline import IncomingNote
-from handy_bridge.server import MIN_AUDIO_SECONDS, preserve_rejected
+from handy_bridge.server import MIN_AUDIO_SECONDS, preserve_rejected, remember_delivered
 
 log = logging.getLogger(__name__)
 
@@ -36,10 +37,19 @@ class ProcessedIds:
     ter sido processada, e notas são fonte: escritas uma vez, nunca
     reescritas. Sem esta lista, um delete falho viraria uma segunda nota no
     vault a cada poll.
+
+    Duas threads escrevem aqui com a mesma instância -- a do poller e o event
+    loop do uvicorn, que é onde o POST /v1/notes registra -- então toda
+    mutação é serializada.
     """
 
     def __init__(self, path: Path):
         self._path = path
+        # Cobre o read-modify-write inteiro, não só o set: duas escritas
+        # simultâneas deixavam um dump curto por cima do prefixo de um mais
+        # longo, e um drive-seen.json ilegível começa vazio no boot seguinte e
+        # reprocessa tudo que ainda estiver na pasta.
+        self._lock = threading.Lock()
         self._ids: set[str] = set()
         if path.exists():
             try:
@@ -48,16 +58,27 @@ class ProcessedIds:
                 log.warning("estado de ids do Drive ilegível em %s; começando vazio", path)
 
     def snapshot(self) -> set[str]:
-        return set(self._ids)
+        with self._lock:
+            return set(self._ids)
 
     def add(self, note_id: str) -> None:
-        self._ids.add(note_id)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        # Escrita atômica: o mesmo cuidado das notas, porque um arquivo de
-        # estado truncado faria o bridge reprocessar tudo.
-        temp = self._path.with_suffix(".tmp")
-        temp.write_text(json.dumps(sorted(self._ids)), encoding="utf-8")
-        temp.replace(self._path)
+        with self._lock:
+            self._ids.add(note_id)
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            # Escrita atômica: o mesmo cuidado das notas, porque um arquivo de
+            # estado truncado faria o bridge reprocessar tudo. O temporário tem
+            # nome próprio a cada escrita -- um `.tmp` fixo era o ponto de
+            # colisão em si: as duas threads escreviam o mesmo arquivo e o
+            # perdedor do replace levantava FileNotFoundError (PermissionError
+            # no Windows, com o handle da outra ainda aberto) depois de a nota
+            # já ter sido entregue.
+            temp = self._path.with_name(f"{self._path.name}.{uuid4().hex}.tmp")
+            try:
+                temp.write_text(json.dumps(sorted(self._ids)), encoding="utf-8")
+                temp.replace(self._path)
+            finally:
+                # Um write que falhou no meio não deixa lixo na pasta de estado.
+                temp.unlink(missing_ok=True)
 
 
 class DrivePoller:
@@ -151,7 +172,13 @@ class DrivePoller:
         segundos para sempre.
         """
         preserve_rejected(target, note.note_id, reason, meta=meta)
-        self._state.add(note.note_id)
+        # Depois de o áudio estar guardado, e por isso registrado sem poder
+        # levantar: a gravação já está segura, e uma falha de escrita aqui
+        # abortaria o poll e deixaria no Drive um arquivo que voltaria a ser
+        # recusado a cada 30 segundos. Diferente do add antes do _submit lá
+        # em cima, que é fatal de propósito -- ali a nota ainda não foi
+        # entregue, e entregar sem registrar é que escreveria a nota duas vezes.
+        remember_delivered(self._state, note.note_id, reason)
         self._purge(note)
 
     def _purge(self, note) -> None:

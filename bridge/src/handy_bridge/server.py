@@ -50,6 +50,26 @@ def preserve_rejected(target: Path, note_id: str, reason: str, meta: str | None 
     log.warning("refused note %s: %s (audio kept in %s)", note_id, reason, REJECTED_DIR)
 
 
+def remember_delivered(store: object, note_id: str, reason: str = "delivered") -> None:
+    """Record that a recording has been dealt with, and never let that cost it.
+
+    Only ever called once the recording itself is safe: handed to the worker, or
+    kept under `rejected/`. From there on this is bookkeeping -- at worst a copy
+    left on Drive gets offered again -- while raising is strictly worse. On the
+    LAN route the store is written after the hand-off, so an exception answered
+    500 with the note already in the vault; the device maps 5xx to Retry, keeps
+    the recording queued and uploads it again, and notes are source: written
+    once, with nothing to reconcile the duplicate.
+
+    Shared by both entrances, like preserve_rejected, because a disk that is
+    full for one door is full for the other.
+    """
+    try:
+        store.add(note_id)  # type: ignore[attr-defined]
+    except Exception as exc:  # noqa: BLE001 - persisting this is best-effort
+        log.warning("note %s (%s) not recorded as processed: %s", note_id, reason, exc)
+
+
 def refuse(target: Path, note_id: str, reason: str, meta: str | None = None) -> JSONResponse:
     """Answer 400 and keep the audio.
 
@@ -144,8 +164,9 @@ def create_app(
         # so the device can drop its radio instead of waiting on inference.
         hand_off(IncomingNote(note_id=note_id, wav_path=target, meta=parsed_meta))
         # After the hand-off, not before: this records that the note exists, and
-        # it only exists once the worker owns it.
-        remember.add(note_id)
+        # it only exists once the worker owns it. Which is also why a failure
+        # here is logged and not raised -- see remember_delivered.
+        remember_delivered(remember, note_id)
         log.info("accepted note %s (%.1fs)", note_id, info.duration_s)
         return JSONResponse({"id": note_id, "status": "accepted"}, status_code=200)
 

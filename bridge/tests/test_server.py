@@ -164,6 +164,36 @@ def test_logs_a_body_the_parser_cannot_read(tmp_path, caplog):
     assert "27" in caplog.text  # o tamanho do corpo que chegou
 
 
+class RefusesToRemember:
+    """A note_id store whose write fails: disk full, permissions, a race."""
+
+    def add(self, note_id: str) -> None:
+        raise OSError("no space left on device")
+
+
+def test_a_store_that_cannot_record_the_note_still_accepts_the_delivery(tmp_path, caplog):
+    # remember.add runs *after* the hand-off, so by then the note is in the
+    # vault's queue. Letting it raise answered 500 with the note already
+    # delivered; the device maps 5xx to Retry, keeps the recording queued and
+    # re-uploads -- two notes for one recording, and nothing reconciles them.
+    cfg = make_cfg(tmp_path)
+    cfg.audio_store.mkdir(parents=True, exist_ok=True)
+    submitted = []
+    c = TestClient(
+        create_app(cfg, submit=submitted.append, processed=RefusesToRemember())
+    )
+
+    with caplog.at_level(logging.WARNING, logger="handy_bridge.server"):
+        resp = post_note(c)
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "accepted"
+    assert len(submitted) == 1
+    assert submitted[0].note_id == "20260907-143211"
+    # Não persistir é um fato que alguém tem que poder ler depois.
+    assert "20260907-143211" in caplog.text
+
+
 def test_logs_a_request_missing_its_audio(tmp_path, caplog):
     c, _ = client(tmp_path)
     with caplog.at_level(logging.WARNING, logger="handy_bridge.server"):
