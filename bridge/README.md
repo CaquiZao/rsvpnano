@@ -60,6 +60,23 @@ O id inclui o nome do arquivo `.gguf`, não apenas o repositório — por exempl
 uv run python -m handy_bridge --config config.toml --log-level info
 ```
 
+A primeira linha do log é `handy-bridge starting, pid N`. Guarde esse número: o
+Python do venv roda atrás de um processo trampolim, então **matar o pai deixa o
+filho vivo** segurando a porta 8787 e fazendo poll do Telegram. Para parar de
+verdade, mate os dois:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" |
+  Where-Object { $_.CommandLine -like "*handy_bridge*" } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+Subir com a porta já ocupada não dá traceback: o serviço checa antes e diz o que
+fazer. Isso também evita a janela em que dois bridges fazem poll do mesmo bot — o
+Telegram responde **409** enquanto ela durar, e por até 25 s depois de um kill,
+porque o long-poll interrompido continua valendo do lado dele. Um 409 isolado
+logo após reiniciar é esperado; um 409 que se repete por minutos não é.
+
 Testar sem o device:
 
 ```bash

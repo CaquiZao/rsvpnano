@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import socket
 import sys
 from pathlib import Path
 
@@ -18,6 +20,23 @@ from handy_bridge.listener import TelegramListener
 from handy_bridge.telegram import TelegramSender
 from handy_bridge.threads import ThreadStore
 from handy_bridge.worker import NoteWorker
+
+
+def port_in_use(port: int) -> bool:
+    """Whether something already holds the port we are about to serve on.
+
+    A best-effort check, not a lock: it can only be racy, and that is fine,
+    because its job is the error message rather than the binding.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind(("0.0.0.0", port))
+    except OSError:
+        return True
+    else:
+        return False
+    finally:
+        probe.close()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,12 +55,30 @@ def main(argv: list[str] | None = None) -> int:
     # matters for diagnosing a failed call.
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
+    # The pid, because "which of these processes do I kill" is a question this
+    # service has made people ask, and the answer was not in the log.
+    logging.getLogger(__name__).info("handy-bridge starting, pid %d", os.getpid())
+
     try:
         cfg = load_config(args.config)
         processor = build_processor(cfg.post_process)
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+
+    # Checked before anything starts, because the alternative is what actually
+    # happened: mDNS announces, the Telegram listener starts polling, and only
+    # then uvicorn fails to bind with a traceback that says nothing about the
+    # other bridge already running. Two listeners on one bot token also make
+    # Telegram answer 409 for as long as the overlap lasts.
+    if port_in_use(cfg.port):
+        print(
+            f"port {cfg.port} is already in use — another bridge is probably "
+            f"running. Its log says 'handy-bridge starting, pid N'; stop that "
+            f"pid and its parent, then start again.",
+            file=sys.stderr,
+        )
+        return 3
 
     telegram = None
     threads = None
