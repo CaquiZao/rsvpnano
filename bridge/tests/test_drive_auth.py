@@ -7,11 +7,14 @@ from handy_bridge.drive_auth import build_consent_url, device_toml, exchange_cod
 
 
 class FakeResponse:
-    def __init__(self, status=200, payload=None):
+    def __init__(self, status=200, payload=None, json_error=False):
         self.status_code = status
         self._payload = payload or {}
+        self._json_error = json_error
 
     def json(self):
+        if self._json_error:
+            raise ValueError("Invalid JSON")
         return self._payload
 
 
@@ -52,3 +55,30 @@ def test_the_device_config_is_toml_the_firmware_can_read():
     assert 'client_id = "cid"' in text
     assert 'refresh_token = "rtok"' in text
     assert 'folder_id = "fid"' in text
+
+
+def test_non_200_response_with_invalid_json_is_handled():
+    # Simulates a corporate proxy or captive-portal error page
+    def requester(method, url, **kw):
+        return FakeResponse(500, json_error=True)
+
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        exchange_code("cid", "csec", "c", "http://127.0.0.1:9004/", requester)
+
+
+def test_non_200_response_with_valid_json_is_handled():
+    # Simulates a Google error response
+    def requester(method, url, **kw):
+        return FakeResponse(400, {"error": "invalid_grant"})
+
+    with pytest.raises(RuntimeError, match="HTTP 400"):
+        exchange_code("cid", "csec", "c", "http://127.0.0.1:9004/", requester)
+
+
+def test_transport_exception_is_wrapped():
+    # Simulates a network error (ConnectError, TimeoutException, etc.)
+    def requester(method, url, **kw):
+        raise RuntimeError("Connection timeout")
+
+    with pytest.raises(RuntimeError, match="RuntimeError"):
+        exchange_code("cid", "csec", "c", "http://127.0.0.1:9004/", requester)

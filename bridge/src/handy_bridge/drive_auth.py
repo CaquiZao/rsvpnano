@@ -44,20 +44,31 @@ def build_consent_url(client_id: str, redirect_uri: str) -> str:
 def exchange_code(client_id: str, client_secret: str, code: str, redirect_uri: str,
                   requester=None) -> str:
     request = requester or (lambda m, u, **kw: httpx.request(m, u, timeout=60, **kw))
-    response = request(
-        "POST",
-        TOKEN_URL,
-        data={
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "code": code,
-            "redirect_uri": redirect_uri,
-            "grant_type": "authorization_code",
-        },
-    )
-    payload = response.json()
+    try:
+        response = request(
+            "POST",
+            TOKEN_URL,
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
+    except Exception as exc:
+        raise RuntimeError(f"não consegui alcançar Google: {type(exc).__name__}") from exc
+
     if response.status_code != 200:
-        raise RuntimeError(f"Google recusou a troca do code: {payload}")
+        # Try to parse JSON for a better error message, but handle non-JSON responses
+        try:
+            payload = response.json()
+            raise RuntimeError(f"Google recusou a troca do code (HTTP {response.status_code}): {payload}")
+        except ValueError:
+            # Response is not valid JSON
+            raise RuntimeError(f"Google recusou a troca do code (HTTP {response.status_code})")
+
+    payload = response.json()
     token = payload.get("refresh_token")
     if not token:
         raise RuntimeError(
