@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from handy_bridge.config import PostProcessConfig
+from handy_bridge.kind import DEFAULT_KIND, NoteKind
 
 
 class PostProcessError(Exception):
@@ -37,6 +38,8 @@ class PostProcessResult:
     tags: list[str]
     cleaned: str
     tasks: list[Task] = field(default_factory=list)
+    # Defaulted so a backend that does not classify still returns a usable result.
+    kind: NoteKind = DEFAULT_KIND
 
 
 class PostProcessor(Protocol):

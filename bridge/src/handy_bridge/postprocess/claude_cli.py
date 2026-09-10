@@ -6,6 +6,7 @@ import json
 import subprocess
 from typing import Callable
 
+from handy_bridge.kind import resolve_kind
 from handy_bridge.postprocess import Answer, PostProcessError, PostProcessResult, Task
 
 MARKER_WORDS = ("pendência", "pendencia", "tarefa", "anotar")
@@ -15,11 +16,18 @@ PROMPT = (
     "alguém que estava lendo um livro. "
     "Responda APENAS com um objeto JSON válido, sem cercas de código, no formato "
     '{"title": string, "tags": array de strings, "cleaned": string, '
+    '"kind": "anotação" ou "pergunta" ou "recall", '
     '"tasks": array de {"text": string, "source": "keyword" ou "inferred", '
     '"answerable": boolean}}.\n'
     '"title" é um título curto e descritivo. "tags" são de 2 a 5 tags em minúsculas. '
     '"cleaned" é a transcrição com pontuação corrigida e hesitações removidas, '
     "preservando o sentido e sem inventar informação.\n"
+    '"kind" é a intenção da gravação. Use "recall" quando a pessoa está afirmando o '
+    "que entendeu ou lembrou, para conferir se acertou. "
+    'Use "pergunta" quando ela está pedindo explicação de algo que não entendeu. '
+    'Use "anotação" para comentário, opinião ou registro solto. '
+    'Em dúvida entre recall e anotação, escolha "anotação": afirmar o que se entendeu '
+    "para ser corrigido é diferente de comentar o que se leu.\n"
     '"tasks" são pendências que a pessoa deixou. Use "keyword" quando ela disser '
     "explicitamente uma palavra marcadora (" + ", ".join(MARKER_WORDS) + ") seguida de "
     'uma ação. Use "inferred" quando não disser a palavra mas houver intenção clara de '
@@ -186,6 +194,9 @@ class ClaudeCliProcessor:
             tags=tags,
             cleaned=str(payload["cleaned"]).strip(),
             tasks=_parse_tasks(payload.get("tasks")),
+            # The spoken marker word beats the model's inference, so the decision
+            # goes through resolve_kind rather than straight into the result.
+            kind=resolve_kind(transcript, str(payload.get("kind", "")) or None),
         )
 
     def answer_tasks(self, questions: list[str], excerpt: str | None) -> list[Answer]:

@@ -52,6 +52,41 @@ def test_passes_model_flag_and_transcript():
     assert any("minha fala" in part for part in seen["cmd"])
 
 
+def _processor(inner: str) -> ClaudeCliProcessor:
+    return ClaudeCliProcessor(
+        "m", runner=lambda cmd, timeout: FakeCompleted(wrapper(inner))
+    )
+
+
+def test_process_reads_the_kind_the_model_returned():
+    inner = '{"title":"T","tags":[],"cleaned":"C","kind":"pergunta"}'
+    assert _processor(inner).process("o que e entropia?").kind == "pergunta"
+
+
+def test_process_applies_the_spoken_override_over_the_model():
+    inner = '{"title":"T","tags":[],"cleaned":"C","kind":"pergunta"}'
+    got = _processor(inner).process("recapitulando: o big bang foi uma expansao")
+    assert got.kind == "recall"
+
+
+def test_process_defaults_the_kind_when_the_model_omits_it():
+    # Backends antigos e saidas incompletas nao podem produzir kind invalido.
+    inner = '{"title":"T","tags":[],"cleaned":"C"}'
+    assert _processor(inner).process("texto neutro").kind == "anotação"
+
+
+def test_process_asks_the_model_for_a_kind():
+    seen = {}
+
+    def runner(cmd, timeout):
+        seen["cmd"] = cmd
+        return FakeCompleted(wrapper('{"title":"T","tags":[],"cleaned":"C"}'))
+
+    ClaudeCliProcessor("m", runner=runner).process("x")
+    prompt = next(part for part in seen["cmd"] if "kind" in part)
+    assert '"kind"' in prompt and "recall" in prompt
+
+
 def test_raises_when_cli_reports_error():
     proc = ClaudeCliProcessor(
         "m", runner=lambda cmd, timeout: FakeCompleted(wrapper("boom", True))
