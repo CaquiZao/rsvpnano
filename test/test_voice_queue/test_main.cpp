@@ -77,6 +77,29 @@ namespace {
                           static_cast<int>(voice::actionFor(voice::UploadResult::Rejected)));
     }
 
+    void test_a_drive_upload_that_landed_leaves_the_queue() {
+        TEST_ASSERT_EQUAL(static_cast<int>(voice::QueueAction::Delete),
+                          static_cast<int>(voice::actionFor(voice::DriveResult::Sent)));
+    }
+
+    void test_a_rejected_drive_token_keeps_the_recording() {
+        // 401/403 do Drive fala do token, nunca da gravação. Estacionar diria
+        // que a nota é ruim; ela fica na fila e sobe quando o token for
+        // corrigido.
+        TEST_ASSERT_EQUAL(static_cast<int>(voice::QueueAction::Keep),
+                          static_cast<int>(voice::actionFor(voice::DriveResult::Unauthorized)));
+    }
+
+    void test_no_internet_keeps_the_recording() {
+        TEST_ASSERT_EQUAL(static_cast<int>(voice::QueueAction::Keep),
+                          static_cast<int>(voice::actionFor(voice::DriveResult::NoInternet)));
+    }
+
+    void test_a_transient_drive_failure_keeps_the_recording() {
+        TEST_ASSERT_EQUAL(static_cast<int>(voice::QueueAction::Keep),
+                          static_cast<int>(voice::actionFor(voice::DriveResult::Retry)));
+    }
+
     // --- o que é lixo ------------------------------------------------------
 
     void test_a_sidecar_without_its_recording_is_swept() {
@@ -136,6 +159,10 @@ int main(int, char**) {
     RUN_TEST(test_a_delivered_recording_leaves_the_queue);
     RUN_TEST(test_a_network_failure_keeps_the_recording_queued);
     RUN_TEST(test_a_refused_recording_is_parked_rather_than_deleted);
+    RUN_TEST(test_a_drive_upload_that_landed_leaves_the_queue);
+    RUN_TEST(test_a_rejected_drive_token_keeps_the_recording);
+    RUN_TEST(test_no_internet_keeps_the_recording);
+    RUN_TEST(test_a_transient_drive_failure_keeps_the_recording);
     RUN_TEST(test_a_sidecar_without_its_recording_is_swept);
     RUN_TEST(test_a_leftover_temporary_is_swept);
     RUN_TEST(test_an_unrelated_file_is_left_alone);

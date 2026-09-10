@@ -48,6 +48,20 @@ namespace voice {
         return QueueAction::Delete;
     }
 
+    QueueAction actionFor(DriveResult result) {
+        switch (result) {
+        case DriveResult::Sent:
+            return QueueAction::Delete;
+        case DriveResult::Retry:
+        case DriveResult::Unauthorized:
+        case DriveResult::NoInternet:
+            break;
+        }
+        // Nenhuma falha do Drive estaciona: estacionar afirma que a gravação
+        // não serve, e o Drive nunca disse isso -- ele nem a olhou.
+        return QueueAction::Keep;
+    }
+
     bool isRecordingName(std::string_view name) {
         const std::string lower = lowered(name);
         // A bare ".wav" has no stem to pair a sidecar with, so it is not a recording.

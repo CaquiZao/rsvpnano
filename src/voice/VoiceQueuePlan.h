@@ -34,6 +34,17 @@ namespace voice {
         Rejected, // 4xx; the bridge will never accept this, so stop asking
     };
 
+    // O resultado de uma tentativa pelo Drive. Separado de UploadResult porque
+    // os erros significam coisas diferentes: um 4xx do bridge é um juízo sobre
+    // a nota, e um 401 do Drive é um problema de token que não diz nada sobre
+    // ela.
+    enum class DriveResult : uint8_t {
+        Sent,          // upload confirmado, com file id
+        Retry,         // 429, 5xx, ou falha de rede
+        Unauthorized,  // 401/403: token ou permissão
+        NoInternet,    // não deu para falar com o Google
+    };
+
     // What the queue does with a recording after an attempt. A pure decision, and
     // deliberately here rather than inside the flush loop: the rule that a refusal
     // must not destroy audio is the kind of thing that has to stay under test on the
@@ -45,6 +56,7 @@ namespace voice {
     };
 
     QueueAction actionFor(UploadResult result);
+    QueueAction actionFor(DriveResult result);
 
     // `names` are file names inside kQueueDir, without the directory.
     QueuePlan planFrom(std::span<const std::string> names);
