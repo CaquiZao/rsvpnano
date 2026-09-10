@@ -59,6 +59,33 @@ def test_resolve_prefers_exact_match_over_offset_disagreement():
     assert (got.chapter, got.source) == (2, "exato")
 
 
+def test_a_word_join_artefact_from_the_device_still_matches():
+    # Regressao vinda do vault real: a nota de 2026-09-09 22:05 traz
+    # "passaram porum processo" onde o livro diz "por um", e o casamento exato
+    # morria nisso. E a conversao HTML-para-texto do device, nao um erro de ASR.
+    book = "humanos arcaicos passaram por um processo que levou ao nanismo"
+    index = chapters_mod.BookIndex(
+        chapters=[
+            chapters_mod.Chapter(1, "Outro", 50, chapters_mod.normalize("nada a ver")),
+            chapters_mod.Chapter(2, "Certo", 50, chapters_mod.normalize(book)),
+        ]
+    )
+    got = chapters_mod.resolve(index, "arcaicos passaram porum processo que levou", None)
+    assert (got.chapter, got.source) == (2, "exato")
+
+
+def test_the_strict_match_wins_when_the_text_is_clean():
+    # Sem espaco, "aula" casaria dentro de "aulas"; com texto limpo o estrito manda.
+    index = chapters_mod.BookIndex(
+        chapters=[
+            chapters_mod.Chapter(1, "Um", 50, chapters_mod.normalize(UNIQUE)),
+            chapters_mod.Chapter(2, "Dois", 50, chapters_mod.normalize(UNIQUE + " extra")),
+        ]
+    )
+    got = chapters_mod.resolve(index, UNIQUE + " extra", None)
+    assert (got.chapter, got.source) == (2, "exato")
+
+
 def test_a_short_excerpt_is_not_trusted():
     # "o gato" casaria em dois capitulos e nao identifica posicao nenhuma.
     got = chapters_mod.resolve(IDX, "o gato", word_offset=150)

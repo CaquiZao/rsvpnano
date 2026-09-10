@@ -113,13 +113,34 @@ def _estimate(index: BookIndex, word_offset: int) -> Resolution | None:
     return Resolution(last.index, last.title, "estimado")
 
 
+def compact(normalized: str) -> str:
+    """Drop spaces so a word-join artefact cannot break a match.
+
+    The device runs its own HTML-to-text conversion, and it sometimes welds two
+    words together: a real excerpt from the vault reads "passaram porum processo"
+    where the book says "por um". Comparing without spaces makes that class of
+    artefact invisible. Word boundaries are lost, but an excerpt of at least
+    MIN_EXCERPT_CHARS characters does not collide by accident across a book.
+    """
+    return normalized.replace(" ", "")
+
+
+def _match(index: BookIndex, needle: str) -> list[Chapter]:
+    """Chapters containing the excerpt, tried strictly before loosely."""
+    hits = [c for c in index.chapters if needle in c.normalized]
+    if hits:
+        return hits
+    loose = compact(needle)
+    return [c for c in index.chapters if loose in compact(c.normalized)]
+
+
 def resolve(
     index: BookIndex, excerpt: str | None, word_offset: int | None
 ) -> Resolution | None:
     """Find the chapter, preferring the excerpt and falling back to the offset."""
     needle = normalize(excerpt or "")
     if len(needle) >= MIN_EXCERPT_CHARS:
-        hits = [c for c in index.chapters if needle in c.normalized]
+        hits = _match(index, needle)
         if len(hits) == 1:
             return Resolution(hits[0].index, hits[0].title, "exato")
         if len(hits) > 1:
