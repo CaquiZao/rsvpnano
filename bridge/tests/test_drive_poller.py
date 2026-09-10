@@ -10,9 +10,9 @@ from handy_bridge.drive_poller import DrivePoller, ProcessedIds
 NOW = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
 
 
-def wav_bytes(seconds: int = 2) -> bytes:
+def wav_bytes(seconds: float = 2) -> bytes:
     """Um WAV PCM que wav.inspect aceita, no formato que o device grava."""
-    data = b"\x00\x01" * (16000 * seconds)
+    data = b"\x00\x01" * int(16000 * seconds)
     return (
         b"RIFF"
         + struct.pack("<I", 36 + len(data))
@@ -30,7 +30,7 @@ WAV = wav_bytes(2)
 
 def make_cfg(tmp_path) -> Config:
     vault = tmp_path / "Reading"
-    vault.mkdir(exist_ok=True)
+    vault.mkdir(parents=True, exist_ok=True)
     return Config(
         vault_path=vault,
         inbox_folder="Inbox",
@@ -163,15 +163,68 @@ def test_the_poller_deletes_extra_copies_along_with_the_wav_and_sidecar(tmp_path
     assert sorted(drive.deleted) == ["s1", "w1", "w2"]
 
 
-def test_an_unreadable_sidecar_does_not_cost_the_note(tmp_path):
+def test_an_unparseable_sidecar_is_refused_the_way_the_lan_route_refuses_it(tmp_path):
+    # POST /v1/notes responde 400 a meta que não é JSON, guardando o áudio. O
+    # poller escrevia a nota sem âncora -- a mesma gravação virava nota por uma
+    # porta e não pela outra. O sidecar é escrito pelo firmware, então seus
+    # bytes exatos são o relatório do bug e são guardados junto.
     cfg = make_cfg(tmp_path)
     submitted = []
-    bad = {"w1": WAV, "s1": b"{nao e json"}
-    poller = DrivePoller(cfg, FakeDrive(pair(), bad), submitted.append,
+    drive = FakeDrive(pair(), {"w1": WAV, "s1": b"{nao e json"})
+    state = ProcessedIds(tmp_path / "seen.json")
+    poller = DrivePoller(cfg, drive, submitted.append, state, now=lambda: NOW)
+
+    assert poller.poll_once() == 0
+    assert submitted == []
+    kept = cfg.audio_store / "rejected"
+    assert (kept / "20260910-120000.wav").read_bytes() == WAV
+    assert (kept / "20260910-120000.meta.txt").read_text(encoding="utf-8") == "{nao e json"
+    # Recusada uma vez, não a cada 30 segundos para sempre.
+    assert "20260910-120000" in state.snapshot()
+    assert sorted(drive.deleted) == ["s1", "w1"]
+
+
+def test_a_missing_sidecar_is_still_tolerated(tmp_path):
+    # A distinção que não pode ser achatada: sidecar *ausente* a spec autoriza
+    # (a nota entra sem âncora), sidecar *ilegível* é recusado.
+    cfg = make_cfg(tmp_path)
+    submitted = []
+    lone = [RemoteFile("w1", "20260910-114000.wav", NOW - timedelta(minutes=20))]
+    poller = DrivePoller(cfg, FakeDrive(lone, {"w1": WAV}), submitted.append,
                          ProcessedIds(tmp_path / "seen.json"), now=lambda: NOW)
 
     assert poller.poll_once() == 1
     assert submitted[0].meta == {}
+
+
+def test_an_unusable_wav_is_refused_instead_of_exploding_inside_the_worker(tmp_path):
+    # pipeline.py chama wav.inspect sem guarda: um WAV inutilizável levantava
+    # ali dentro, era engolido numa linha de log pelo worker, e a cópia no
+    # Drive já tinha sido apagada. A rota da LAN recusa isso com 400 e guarda
+    # o áudio; aqui não havia nem uma coisa nem a outra.
+    cfg = make_cfg(tmp_path)
+    submitted = []
+    drive = FakeDrive(pair(), {"w1": b"isto nao e um wav", "s1": blobs()["s1"]})
+    state = ProcessedIds(tmp_path / "seen.json")
+    poller = DrivePoller(cfg, drive, submitted.append, state, now=lambda: NOW)
+
+    assert poller.poll_once() == 0
+    assert submitted == []
+    assert (cfg.audio_store / "rejected" / "20260910-120000.wav").exists()
+    assert "20260910-120000" in state.snapshot()
+    assert sorted(drive.deleted) == ["s1", "w1"]
+
+
+def test_a_sub_second_recording_is_refused_instead_of_becoming_an_empty_note(tmp_path):
+    cfg = make_cfg(tmp_path)
+    submitted = []
+    drive = FakeDrive(pair(), {"w1": wav_bytes(0.5), "s1": blobs()["s1"]})
+    poller = DrivePoller(cfg, drive, submitted.append, ProcessedIds(tmp_path / "seen.json"),
+                         now=lambda: NOW)
+
+    assert poller.poll_once() == 0
+    assert submitted == []
+    assert (cfg.audio_store / "rejected" / "20260910-120000.wav").exists()
 
 
 def test_stop_waits_for_the_thread_to_actually_stop(tmp_path):

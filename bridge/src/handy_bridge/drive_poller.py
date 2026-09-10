@@ -14,9 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from handy_bridge import wav as wav_mod
 from handy_bridge.config import Config
 from handy_bridge.drive_inbox import plan_inbox
 from handy_bridge.pipeline import IncomingNote
+from handy_bridge.server import MIN_AUDIO_SECONDS, preserve_rejected
 
 log = logging.getLogger(__name__)
 
@@ -88,18 +90,45 @@ class DrivePoller:
 
         handed = 0
         for note in plan.ready:
-            meta = {}
+            raw_sidecar = None
             if note.sidecar is not None:
-                try:
-                    meta = json.loads(self._drive.download(note.sidecar.id).decode("utf-8"))
-                except (ValueError, UnicodeDecodeError):
-                    # Sidecar ilegível não custa a nota: ela entra sem âncora,
-                    # como uma gravação sem sidecar no cartão.
-                    log.warning("sidecar de %s ilegível; nota entra sem âncora", note.note_id)
+                raw_sidecar = self._drive.download(note.sidecar.id)
 
             self._cfg.audio_store.mkdir(parents=True, exist_ok=True)
             target = self._cfg.audio_store / f"{note.note_id}.wav"
+            # Em disco antes de qualquer validação, exatamente como no
+            # POST /v1/notes: o áudio é a única parte que ninguém reconstrói, e
+            # cada porteira abaixo é razão para guardá-lo, não para perdê-lo.
             target.write_bytes(self._drive.download(note.wav.id))
+
+            # As mesmas três porteiras do POST /v1/notes, na mesma ordem. Sem
+            # elas, um WAV inutilizável levantava no wav.inspect sem guarda de
+            # pipeline.py, era engolido numa linha de log pelo worker, e a
+            # cópia no Drive já tinha sido apagada -- gravação perdida em
+            # silêncio.
+            meta: dict = {}
+            if raw_sidecar is not None:
+                try:
+                    meta = json.loads(raw_sidecar)
+                except ValueError:
+                    # Sidecar ilegível é recusa, como na rota da LAN. Um
+                    # sidecar *ausente* continua tolerado (a nota entra sem
+                    # âncora); ilegível significa que o firmware escreveu algo
+                    # que ninguém sabe ler, e escrever a nota sem âncora
+                    # esconderia isso.
+                    self._refuse(note, target, "meta is not valid JSON",
+                                 meta=raw_sidecar.decode("utf-8", errors="replace"))
+                    continue
+
+            try:
+                info = wav_mod.inspect(target)
+            except wav_mod.InvalidWav as exc:
+                self._refuse(note, target, f"invalid WAV: {exc}")
+                continue
+
+            if info.duration_s < MIN_AUDIO_SECONDS:
+                self._refuse(note, target, f"audio too short: {info.duration_s:.2f}s")
+                continue
 
             # Marcado antes de entregar: se o processo morrer entre as duas
             # coisas, a nota é perdida uma vez. Marcar depois arriscaria
@@ -110,9 +139,20 @@ class DrivePoller:
             self._state.add(note.note_id)
             self._submit(IncomingNote(note_id=note.note_id, wav_path=target, meta=meta))
             handed += 1
-            log.info("nota %s recebida pelo Drive", note.note_id)
+            log.info("nota %s recebida pelo Drive (%.1fs)", note.note_id, info.duration_s)
             self._purge(note)
         return handed
+
+    def _refuse(self, note, target: Path, reason: str, meta: str | None = None) -> None:
+        """Guarda o áudio, diz por quê, e tira a gravação do caminho.
+
+        Marcada como processada e removida do Drive: uma recusa é definitiva,
+        e sem isso a mesma gravação seria baixada e recusada a cada 30
+        segundos para sempre.
+        """
+        preserve_rejected(target, note.note_id, reason, meta=meta)
+        self._state.add(note.note_id)
+        self._purge(note)
 
     def _purge(self, note) -> None:
         """Tira do Drive tudo que pertence a esta gravação."""

@@ -27,14 +27,17 @@ MIN_AUDIO_SECONDS = 1.0
 REJECTED_DIR = "rejected"
 
 
-def refuse(target: Path, note_id: str, reason: str, meta: str | None = None) -> JSONResponse:
-    """Answer 400, keep the audio, and say why somewhere someone reads.
+def preserve_rejected(target: Path, note_id: str, reason: str, meta: str | None = None) -> None:
+    """Keep the audio of a refused recording, and say why somewhere someone reads.
 
-    Both halves matter and both were missing. The device reads the status line
-    and nothing else -- draining the body would cost radio time -- so a reason
-    that only travels in the response reaches no one at all. And a refusal is
-    precisely when the recording is most worth keeping: the device treats 4xx as
-    final and deletes its own copy, so what is here is the last one there is.
+    A refusal is precisely when the recording is most worth keeping: whichever
+    route brought it, the device is done with it -- it treats a 4xx as final and
+    deletes its own copy, and a note that came by Drive has already had its copy
+    removed from the folder -- so what lands here is the last one there is.
+
+    Shared by both entrances on purpose. A recording refused by one route and
+    silently turned into a broken note by the other is the divergence this
+    function exists to prevent.
     """
     kept = target.parent / REJECTED_DIR
     kept.mkdir(parents=True, exist_ok=True)
@@ -45,6 +48,16 @@ def refuse(target: Path, note_id: str, reason: str, meta: str | None = None) -> 
     if meta is not None:
         (kept / f"{note_id}.meta.txt").write_text(meta, encoding="utf-8")
     log.warning("refused note %s: %s (audio kept in %s)", note_id, reason, REJECTED_DIR)
+
+
+def refuse(target: Path, note_id: str, reason: str, meta: str | None = None) -> JSONResponse:
+    """Answer 400 and keep the audio.
+
+    Both halves matter and both were missing. The device reads the status line
+    and nothing else -- draining the body would cost radio time -- so a reason
+    that only travels in the response reaches no one at all.
+    """
+    preserve_rejected(target, note_id, reason, meta=meta)
     return JSONResponse({"error": reason}, status_code=400)
 
 

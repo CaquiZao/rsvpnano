@@ -104,3 +104,90 @@ def test_a_recording_delivered_by_lan_does_not_come_back_as_a_second_note(tmp_pa
     assert len(notes_in(cfg)) == 1
     # E a cópia no Drive não fica lá para sempre entupindo a listagem.
     assert sorted(drive.deleted) == ["s1", "w1"]
+
+
+def note_from_lan(tmp_path, wav, meta):
+    """A nota que POST /v1/notes produz, no vault dele."""
+    cfg = make_cfg(tmp_path / "lan")
+    cfg.audio_store.mkdir(parents=True, exist_ok=True)
+    worker = NoteWorker(cfg, processor=None, transcribe_fn=spoken())
+    worker.start()
+    client = TestClient(create_app(cfg, submit=worker.submit))
+    response = client.post(
+        "/v1/notes",
+        files={"audio": ("20260910-120000.wav", wav, "audio/wav")},
+        data={"meta": meta},
+    )
+    worker.stop(timeout=10)
+    return cfg, response
+
+
+def note_from_drive(tmp_path, wav, meta):
+    """A nota que a porta do Drive produz, no vault dela."""
+    cfg = make_cfg(tmp_path / "drive")
+    worker = NoteWorker(cfg, processor=None, transcribe_fn=spoken())
+    worker.start()
+    created = NOW - timedelta(minutes=1)
+    drive = FakeDrive(
+        [
+            RemoteFile("w1", "20260910-120000.wav", created),
+            RemoteFile("s1", "20260910-120000.json", created),
+        ],
+        {"w1": wav, "s1": meta.encode("utf-8")},
+    )
+    handed = DrivePoller(
+        cfg, drive, worker.submit, ProcessedIds(cfg.audio_store / "seen.json"), now=lambda: NOW
+    ).poll_once()
+    worker.stop(timeout=10)
+    return cfg, handed
+
+
+def test_the_two_entrances_produce_the_same_note(tmp_path):
+    # O teste que a §10 da spec pediu e que não veio: não "uma nota chegou",
+    # e sim que a nota vinda do Drive é a que o POST /v1/notes produziria.
+    # É este teste que teria pegado a divergência de validação entre as duas
+    # portas.
+    wav = wav_bytes(2)
+    meta = json.dumps(
+        {
+            "clock_synced": True,
+            "recorded_at": "2026-09-10T12:00:00",
+            "excerpt": "um trecho qualquer",
+        }
+    )
+
+    lan_cfg, response = note_from_lan(tmp_path, wav, meta)
+    drive_cfg, handed = note_from_drive(tmp_path, wav, meta)
+    assert response.status_code == 200
+    assert handed == 1
+
+    lan_notes = notes_in(lan_cfg)
+    drive_notes = notes_in(drive_cfg)
+    assert len(lan_notes) == 1
+    assert len(drive_notes) == 1
+    # Mesma pasta no vault, mesmo nome de arquivo, mesmo conteúdo -- corpo,
+    # kind e frontmatter inteiros.
+    assert drive_notes[0].relative_to(drive_cfg.vault_path) == lan_notes[0].relative_to(
+        lan_cfg.vault_path
+    )
+    assert drive_notes[0].read_text(encoding="utf-8") == lan_notes[0].read_text(
+        encoding="utf-8"
+    )
+
+
+def test_what_one_entrance_refuses_the_other_refuses_too(tmp_path):
+    # A mesma equivalência do lado da recusa: um WAV inutilizável não pode
+    # virar nota por uma porta e 400 pela outra.
+    meta = json.dumps({"clock_synced": True, "recorded_at": "2026-09-10T12:00:00"})
+    broken = b"isto nao e um wav"
+
+    lan_cfg, response = note_from_lan(tmp_path, broken, meta)
+    drive_cfg, handed = note_from_drive(tmp_path, broken, meta)
+
+    assert response.status_code == 400
+    assert handed == 0
+    assert notes_in(lan_cfg) == []
+    assert notes_in(drive_cfg) == []
+    # E o áudio das duas está no mesmo lugar, com o mesmo nome.
+    assert (lan_cfg.audio_store / "rejected" / "20260910-120000.wav").exists()
+    assert (drive_cfg.audio_store / "rejected" / "20260910-120000.wav").exists()
