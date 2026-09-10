@@ -268,6 +268,109 @@ def test_the_poller_drains_what_it_will_never_process_again(tmp_path):
     assert sorted(drive.deleted) == ["s1", "s9", "w1"]
 
 
+def test_a_stale_wav_is_secured_before_it_leaves_the_drive(tmp_path):
+    # A colisão real: boot-00042318 foi entregue pela LAN e ficou marcado como
+    # processado; um boot seguinte cunha o mesmo stem para OUTRA gravação, que
+    # cai para o Drive. O poller apagava stale antes de qualquer download, e
+    # essa gravação era destruída -- sem nota e sem cópia em lugar nenhum.
+    cfg = make_cfg(tmp_path)
+    outra = wav_bytes(3)  # bytes diferentes da que ganhou a colisão
+    kept_at_delete: dict[str, list[str]] = {}
+
+    class DriveQueOlha(FakeDrive):
+        def delete(self, file_id):
+            # O que já estava guardado no instante em que o arquivo saiu.
+            kept_at_delete[file_id] = sorted(
+                p.name for p in (cfg.audio_store / "rejected").glob("*.wav")
+            )
+            super().delete(file_id)
+
+    files = [
+        RemoteFile("w1", "boot-00042318.wav", NOW - timedelta(minutes=10)),
+        RemoteFile("s1", "boot-00042318.json", NOW - timedelta(minutes=10)),
+    ]
+    drive = DriveQueOlha(files, {"w1": outra, "s1": b"{}"})
+    state = ProcessedIds(tmp_path / "seen.json")
+    state.add("boot-00042318")
+    submitted = []
+    poller = DrivePoller(cfg, drive, submitted.append, state, now=lambda: NOW)
+
+    assert poller.poll_once() == 0
+    assert submitted == []
+
+    kept = sorted((cfg.audio_store / "rejected").glob("*.wav"))
+    assert len(kept) == 1
+    assert kept[0].read_bytes() == outra
+    assert "boot-00042318" in kept[0].name
+    # Guardado ANTES de sair do Drive, não depois.
+    assert kept_at_delete["w1"] == [kept[0].name]
+    # E a pasta continua drenando: era isso que a remoção de stale consertava.
+    assert sorted(drive.deleted) == ["s1", "w1"]
+
+
+def test_rescuing_a_stale_wav_does_not_touch_the_note_in_the_worker_queue(tmp_path):
+    # A gravação que ganhou a colisão está em audio_store/{note_id}.wav e o
+    # worker ainda vai transcrevê-la. Se o resgate escrevesse nesse caminho e
+    # depois o movesse para rejected/, a colisão destruiria as duas gravações.
+    cfg = make_cfg(tmp_path)
+    cfg.audio_store.mkdir(parents=True, exist_ok=True)
+    na_fila = cfg.audio_store / "boot-00042318.wav"
+    na_fila.write_bytes(WAV)
+
+    files = [RemoteFile("w1", "boot-00042318.wav", NOW - timedelta(minutes=10))]
+    drive = FakeDrive(files, {"w1": wav_bytes(3)})
+    state = ProcessedIds(tmp_path / "seen.json")
+    state.add("boot-00042318")
+    poller = DrivePoller(cfg, drive, lambda n: None, state, now=lambda: NOW)
+
+    poller.poll_once()
+
+    assert na_fila.read_bytes() == WAV
+    assert [p.read_bytes() for p in (cfg.audio_store / "rejected").glob("*.wav")] == [
+        wav_bytes(3)
+    ]
+    assert drive.deleted == ["w1"]
+
+
+def test_a_stale_wav_that_cannot_be_downloaded_stays_on_the_drive(tmp_path):
+    # Se os bytes não chegaram, eles só existem no Drive: apagar ali seria a
+    # mesma destruição por outro caminho. Fica para o próximo poll, e o resto
+    # do poll segue -- um arquivo problemático não pode travar a drenagem.
+    cfg = make_cfg(tmp_path)
+
+    class DriveSemDownload(FakeDrive):
+        def download(self, file_id):
+            raise RuntimeError("rede caiu")
+
+    files = [RemoteFile("w1", "boot-00042318.wav", NOW - timedelta(minutes=10))]
+    drive = DriveSemDownload(files, {})
+    state = ProcessedIds(tmp_path / "seen.json")
+    state.add("boot-00042318")
+    poller = DrivePoller(cfg, drive, lambda n: None, state, now=lambda: NOW)
+
+    assert poller.poll_once() == 0
+    assert drive.deleted == []
+
+
+def test_an_orphan_sidecar_is_dropped_without_downloading_anything(tmp_path):
+    # Um .json sem .wav não carrega gravação nenhuma: baixá-lo seria rede
+    # gasta à toa, e a fila do device varre os órfãos dela do mesmo jeito.
+    cfg = make_cfg(tmp_path)
+
+    class DriveQueNaoDeixaBaixar(FakeDrive):
+        def download(self, file_id):
+            raise AssertionError("sidecar órfão não precisa ser baixado")
+
+    files = [RemoteFile("s9", "boot-00042318.json", NOW - timedelta(minutes=60))]
+    drive = DriveQueNaoDeixaBaixar(files, {})
+    poller = DrivePoller(cfg, drive, lambda n: None, ProcessedIds(tmp_path / "seen.json"),
+                         now=lambda: NOW)
+
+    assert poller.poll_once() == 0
+    assert drive.deleted == ["s9"]
+    assert list((cfg.audio_store / "rejected").glob("*")) == []
+
+
 def test_a_hostile_drive_file_name_stays_inside_the_audio_store(tmp_path):
     cfg = make_cfg(tmp_path)
     files = [

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,11 +18,25 @@ from uuid import uuid4
 
 from handy_bridge import wav as wav_mod
 from handy_bridge.config import Config
-from handy_bridge.drive_inbox import plan_inbox
+from handy_bridge.drive_inbox import note_id_of, plan_inbox
 from handy_bridge.pipeline import IncomingNote
 from handy_bridge.server import MIN_AUDIO_SECONDS, preserve_rejected, remember_delivered
 
 log = logging.getLogger(__name__)
+
+
+def _rescued_name(remote) -> str:
+    """Nome local de uma cópia resgatada do Drive, único por arquivo remoto.
+
+    Não pode ser `{note_id}.wav`: esse é o caminho onde as duas portas escrevem
+    o áudio de uma nota viva, e numa colisão de note_id é o da gravação que
+    está neste instante na fila do worker -- escrever nele (e depois movê-lo
+    para rejected/) faria a colisão destruir as duas gravações em vez de uma.
+    O file id do Drive é único por arquivo e ainda diz de qual arquivo da pasta
+    veio; passa por um filtro porque vem de fora e termina num caminho.
+    """
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "", remote.id)[:64] or "sem-id"
+    return f"{note_id_of(remote.name)}.drive-{safe_id}.wav"
 
 
 class ProcessedIds:
@@ -102,12 +117,17 @@ class DrivePoller:
         """Entrega ao worker tudo que está pronto. Devolve quantas notas foram."""
         plan = plan_inbox(self._drive.list_inbox(), self._state.snapshot(), self._now())
 
-        # Primeiro o lixo, e antes de qualquer download: a pasta não se drena
-        # sozinha, e uma listagem entupida é o que faz uma gravação nova ficar
-        # invisível. Se um download abaixo falhar e abortar o poll, a limpeza
-        # já aconteceu.
-        for stale in plan.stale:
-            self._forget(stale.id)
+        # Primeiro o lixo: a pasta não se drena sozinha, e uma listagem
+        # entupida é o que faz uma gravação nova ficar invisível. Vem antes das
+        # notas prontas para que um download que falhe lá embaixo e aborte o
+        # poll não custe a limpeza deste ciclo.
+        #
+        # Sidecar órfão sai direto -- é metadado, não gravação. Áudio nunca:
+        # cada .wav é resgatado antes de sair, e só sai se o resgate deu certo.
+        for sidecar in plan.stale_sidecars:
+            self._forget(sidecar.id)
+        for stale in plan.stale_audio:
+            self._rescue(stale)
 
         handed = 0
         for note in plan.ready:
@@ -180,6 +200,37 @@ class DrivePoller:
         # entregue, e entregar sem registrar é que escreveria a nota duas vezes.
         remember_delivered(self._state, note.note_id, reason)
         self._purge(note)
+
+    def _rescue(self, remote) -> None:
+        """Garante os bytes de um .wav já-processado antes de tirá-lo do Drive.
+
+        "Já processado" é uma afirmação sobre o note_id, e note_id colide: sem
+        relógio sincronizado o stem é boot-%08lu, milissegundos desde o boot,
+        que reinicia em 0 a cada boot (src/voice/Clock.cpp) -- e as gravações
+        pré-sync são exatamente as que caem para este fallback. Então este
+        arquivo pode ser uma *outra* gravação com o mesmo nome, que ninguém
+        nunca ouviu. Apagá-lo sem baixar destruía essa gravação: sem nota e sem
+        cópia em lugar nenhum. Baixado e guardado em rejected/, a pasta
+        continua drenando e nada é destruído.
+
+        Se o resgate falhar, o arquivo fica no Drive: os bytes só existem lá, e
+        apagar seria a mesma destruição por outro caminho. Falha de um arquivo
+        não interrompe o poll -- travar a drenagem é o que enche a pasta até uma
+        gravação nova não aparecer mais na listagem.
+        """
+        note_id = note_id_of(remote.name)
+        reason = "cópia no Drive de um note_id já processado"
+        try:
+            data = self._drive.download(remote.id)
+            self._cfg.audio_store.mkdir(parents=True, exist_ok=True)
+            target = self._cfg.audio_store / _rescued_name(remote)
+            target.write_bytes(data)
+            preserve_rejected(target, note_id, reason)
+        except Exception as exc:  # noqa: BLE001 - sem os bytes, não se apaga
+            log.warning("não resgatei %s (%s) do Drive, e por isso não apaguei: %s",
+                        note_id, remote.id, exc)
+            return
+        self._forget(remote.id)
 
     def _purge(self, note) -> None:
         """Tira do Drive tudo que pertence a esta gravação."""

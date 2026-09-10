@@ -102,7 +102,25 @@ def test_an_already_processed_pair_is_reported_for_deletion():
     ]
     plan = plan_inbox(files, processed_ids={"20260910-120000"}, now=NOW)
     assert plan.ready == []
-    assert sorted(f.id for f in plan.stale) == ["s1", "w1", "w2"]
+    # O áudio sai por uma lista própria: "já processado" é uma afirmação sobre o
+    # note_id, e note_id colide (boot-%08lu reinicia em 0 a cada boot), então
+    # esses bytes podem ser de outra gravação e o chamador tem que garanti-los
+    # antes de apagar. O sidecar não carrega gravação nenhuma.
+    assert sorted(f.id for f in plan.stale_audio) == ["w1", "w2"]
+    assert [f.id for f in plan.stale_sidecars] == ["s1"]
+
+
+def test_a_processed_wav_is_never_reported_as_a_bare_deletion():
+    # Sem relógio sincronizado o stem é boot-%08lu: milissegundos desde o boot,
+    # reiniciando em 0 a cada boot (src/voice/Clock.cpp). As gravações pré-sync
+    # são exatamente as que caem para o Drive, então dois boots cunham o mesmo
+    # nome para gravações diferentes -- e este arquivo pode ser a segunda
+    # delas. Ele só pode ser apagado depois de os bytes estarem guardados.
+    files = [RemoteFile("w1", "boot-00042318.wav", at(10))]
+    plan = plan_inbox(files, processed_ids={"boot-00042318"}, now=NOW)
+    assert plan.ready == []
+    assert [f.id for f in plan.stale_audio] == ["w1"]
+    assert plan.stale_sidecars == []
 
 
 def test_an_orphan_sidecar_is_reported_for_deletion_after_the_grace_period():
@@ -111,7 +129,8 @@ def test_an_orphan_sidecar_is_reported_for_deletion_after_the_grace_period():
     files = [RemoteFile("s1", "20260910-114000.json", at(20))]
     plan = plan_inbox(files, processed_ids=set(), now=NOW)
     assert plan.ready == []
-    assert [f.id for f in plan.stale] == ["s1"]
+    assert [f.id for f in plan.stale_sidecars] == ["s1"]
+    assert plan.stale_audio == []
 
 
 def test_an_orphan_sidecar_within_the_grace_period_is_left_alone():
@@ -120,7 +139,8 @@ def test_an_orphan_sidecar_within_the_grace_period_is_left_alone():
     files = [RemoteFile("s1", "20260910-120000.json", at(1))]
     plan = plan_inbox(files, processed_ids=set(), now=NOW)
     assert plan.ready == []
-    assert plan.stale == []
+    assert plan.stale_sidecars == []
+    assert plan.stale_audio == []
 
 
 def test_a_hostile_file_name_cannot_escape_the_note_id():

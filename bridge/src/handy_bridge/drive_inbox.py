@@ -42,13 +42,26 @@ class ReadyNote:
 @dataclass(frozen=True)
 class InboxPlan:
     ready: list[ReadyNote]
-    # Files nothing will ever read again, and which the caller must therefore
-    # delete: the folder does not drain by itself. A best-effort delete that
-    # failed, and an orphan sidecar that can never be paired, would otherwise
-    # sit in the listing forever -- and a listing full of them is how a new
-    # recording becomes invisible while the device has already dropped its
-    # only copy.
-    stale: list[RemoteFile]
+    # Both lists are files nothing will ever read again, and which the caller
+    # must therefore get out of the folder: it does not drain by itself. A
+    # best-effort delete that failed, and an orphan sidecar that can never be
+    # paired, would otherwise sit in the listing forever -- and a listing full
+    # of them is how a new recording becomes invisible while the device has
+    # already dropped its only copy.
+    #
+    # They are two lists because deleting them is not the same act. "Already
+    # processed" is a claim about the note_id, and the note_id is the device's
+    # file stem -- which is `boot-%08lu`, milliseconds since boot restarting at
+    # 0 on every boot, whenever the clock is not synced (src/voice/Clock.cpp).
+    # Pre-sync recordings are exactly the ones that queue for this fallback, so
+    # two boots can mint the same stem for two different recordings. A .wav
+    # here may therefore be a recording nobody has ever heard, and the caller
+    # must secure its bytes before removing it.
+    stale_audio: list[RemoteFile]
+    # A .json with no recording behind it: an orphan, or the sidecar of a
+    # note_id already delivered. It carries no audio, so there is nothing to
+    # secure -- the device's own queue sweeps its orphan sidecars the same way.
+    stale_sidecars: list[RemoteFile]
 
 
 def note_id_of(name: str) -> str:
@@ -88,7 +101,8 @@ def plan_inbox(
         wavs_by_note.setdefault(note_id_of(f.name), []).append(f)
 
     ready: list[ReadyNote] = []
-    stale: list[RemoteFile] = []
+    stale_audio: list[RemoteFile] = []
+    stale_sidecars: list[RemoteFile] = []
     for note_id, wavs in wavs_by_note.items():
         wavs.sort(key=lambda w: w.created_at)
         sidecar = sidecars.get(note_id)
@@ -96,10 +110,12 @@ def plan_inbox(
             # This recording is already a note -- delivered by an earlier poll
             # whose delete failed, or by POST /v1/notes, which records into the
             # same store. Skipping it (what this did before) left it in the
-            # folder for good; reporting it is what drains the folder.
-            stale.extend(wavs)
+            # folder for good; reporting it is what drains the folder. As audio,
+            # though: the stem may have collided with a recording from another
+            # boot, so these bytes are not certainly a copy of anything.
+            stale_audio.extend(wavs)
             if sidecar is not None:
-                stale.append(sidecar)
+                stale_sidecars.append(sidecar)
             continue
         wav, *extra_copies = wavs
         if sidecar is None and now - wav.created_at < grace:
@@ -115,8 +131,9 @@ def plan_inbox(
         # anchor -- so it only becomes stale once the deadline has passed.
         if note_id not in processed_ids and now - sidecar.created_at < grace:
             continue
-        stale.append(sidecar)
+        stale_sidecars.append(sidecar)
 
     ready.sort(key=lambda r: r.wav.created_at)
-    stale.sort(key=lambda f: f.created_at)
-    return InboxPlan(ready=ready, stale=stale)
+    stale_audio.sort(key=lambda f: f.created_at)
+    stale_sidecars.sort(key=lambda f: f.created_at)
+    return InboxPlan(ready=ready, stale_audio=stale_audio, stale_sidecars=stale_sidecars)
