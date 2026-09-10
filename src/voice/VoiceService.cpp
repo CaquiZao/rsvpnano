@@ -7,6 +7,7 @@
 
 #include "network/WifiConnection.h"
 #include "voice/Clock.h"
+#include "voice/DriveUploader.h"
 #include "voice/VoiceQueue.h"
 #include "voice/VoiceUploader.h"
 
@@ -169,9 +170,66 @@ namespace voice {
             endpoint = discoverBridge();
         }
         if (!endpoint) {
+            // Not finding the bridge says nothing about whether the bridge is on the
+            // network -- it might be, behind a firewall that only blocks inbound, and
+            // reachable to anything that could open a connection to it. That used to
+            // be reported as "Bridge nao esta na rede," a claim this code has no way
+            // to know is true. Drive is the fallback for exactly this gap, and it
+            // needs the radio that is already up, so it runs before disconnecting
+            // rather than after.
+            auto driveCredentials = loadDriveConfig(fs);
+            if (!driveCredentials) {
+                net::disconnect();
+                busy_ = false;
+                lastError_ = "Bridge fora da rede; Drive nao configurado";
+                return;
+            }
+
+            size_t sent = 0;
+            size_t refused = 0;
+            for (const auto& entry : items) {
+                const DriveResult result = uploadToDrive(fs, *driveCredentials, entry);
+                switch (actionFor(result)) {
+                case QueueAction::Keep:
+                    // Same "stop at the first failure" rule as the LAN route below.
+                    // A Drive result never parks (see actionFor(DriveResult) in
+                    // VoiceQueuePlan.cpp), so Keep is the only branch a failure can
+                    // land in; which message depends on what actually failed.
+                    switch (result) {
+                    case DriveResult::Unauthorized:
+                        lastError_ = "Drive recusou: token";
+                        break;
+                    case DriveResult::NoInternet:
+                    case DriveResult::Retry:
+                    case DriveResult::Sent:
+                        lastError_ = "Bridge fora da rede; sem internet";
+                        break;
+                    }
+                    break;
+                case QueueAction::Park:
+                    // actionFor(DriveResult) never returns this today. Handled anyway
+                    // so this switch stays the same shape as the LAN one below, and
+                    // so a future change there cannot fall through unnoticed.
+                    queue::markRejected(fs, entry);
+                    ++refused;
+                    continue;
+                case QueueAction::Delete:
+                    queue::markSent(fs, entry);
+                    ++sent;
+                    continue;
+                }
+                break;
+            }
+
             net::disconnect();
+            pendingCount_ = queue::pendingCount(fs);
             busy_ = false;
-            lastError_ = "Bridge nao esta na rede";
+            if (sent == items.size()) {
+                lastError_ = nullptr;
+            }
+            ESP_LOGI(kTag, "drive flush sent %u of %u, %u refused, %u still queued",
+                     static_cast<unsigned>(sent), static_cast<unsigned>(items.size()),
+                     static_cast<unsigned>(refused), static_cast<unsigned>(pendingCount_));
             return;
         }
 
