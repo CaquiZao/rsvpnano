@@ -1,7 +1,7 @@
 # Organização do vault e fluxo de leitura
 
 **Data:** 2026-09-09
-**Status:** aguardando revisão do spec
+**Status:** implementado, com duas decisões revertidas em uso — ver §15
 **Depende de:** `2026-09-07-notas-de-voz-obsidian-design.md`
 **Escopo de código:** apenas `bridge/` e o vault. Nenhuma mudança de firmware.
 
@@ -45,12 +45,12 @@ sem duplicar dado:
 
 | Eixo | Mecanismo | Por quê |
 |---|---|---|
-| Posição | pastas em disco | é a única ordenação que o explorador de arquivos dá de graça |
-| Tipo | views de Bases sobre o frontmatter | lê as notas, então não pode dessincronizar |
+| Tipo | pastas em disco | ler uma anotação é um clique no explorador, não uma consulta |
+| Posição | resumo do capítulo | é onde as notas de um capítulo voltam a ficar juntas |
 | Status | quadro do Kanban | já existe e já funciona |
 
-`bases` e `bookmarks` estão habilitados em `.obsidian/core-plugins.json`, então o eixo de
-tipo não custa plugin novo nem arquivo gerado.
+Esta tabela foi invertida depois de o usuário usar o resultado: a versão original punha
+posição em pasta e tipo em views de Bases. Ver §15.
 
 ## 3. Escopo
 
@@ -115,12 +115,13 @@ Derivados levam `generated: true` no frontmatter e um aviso de uma linha.
 
 ### 4.2 Nome do arquivo de nota
 
-`<capítulo>-<offset> <título>.md`, ambos com zero à esquerda. A largura do capítulo é a do
-total de capítulos do livro; o offset usa 6 dígitos.
+`YYYY-MM-DD HHMM - <título>.md`.
 
-O prefixo é **posição, não data**. Ordem de leitura não é ordem de gravação: reler o
-capítulo 2 depois do 8 devolve a nota ao lugar dela no livro. A data permanece no
-frontmatter e nas views.
+A versão original deste spec usava `<capítulo>-<offset> <título>.md`, para que uma
+listagem saísse em ordem de leitura. Isso valia enquanto todas as notas dividiam um
+diretório; com as notas separadas por tipo (§10), a ordem de leitura passou a viver no
+resumo do capítulo e o nome ficou carregando um código ilegível. A posição vive em
+`chapter` e `word_offset`, que é de onde os resumos a leem.
 
 ### 4.3 Frontmatter da nota
 
@@ -290,22 +291,21 @@ sem gravação, que é sub-projeto próprio.
 Este é o único gatilho que gasta uma terceira chamada de LLM, e ele é raro: uma vez por
 capítulo, não uma vez por nota.
 
-## 10. Views por tipo
+## 10. Uma pasta por tipo
 
-Três arquivos na raiz — `Anotações.base`, `Perguntas.base`, `Recall.base` — marcados nos
-Bookmarks. Um clique na barra lateral leva direto ao que se quer ler, que é o pedido
-original ("abrir o Obsidian e ler minhas anotações").
+`Anotações/`, `Perguntas/` e `Recall/` dentro do diretório de cada livro. As três são
+criadas sempre, mesmo vazias: uma pasta ausente é invisível, e abrir um livro sem ver
+`Recall` não sugere onde um recall vai cair.
 
-Semântica de cada view: filtrar por `kind`, agrupar por `book` e depois `chapter`, ordenar
-por `chapter` e `word_offset`, exibir `title`, `chapter_title`, `date` e `tags`.
+O custo é real e vale nomear: as notas de um mesmo capítulo ficam espalhadas em três
+pastas, e o nome do arquivo (§4.2) não diz onde no livro elas estão. O resumo do
+capítulo é o que devolve essa visão, ordenado por `word_offset`.
 
-Uma view sobre o frontmatter **não pode ficar dessincronizada** — ela lê as notas. É o que
-torna o eixo de tipo mais barato que pasta por tipo ou índice gerado: nenhum código novo
-no bridge.
+Consequência de implementação: achar as notas de um capítulo exige ler o frontmatter de
+todas as notas do livro, em vez de filtrar por prefixo de nome. É irrelevante ao lado
+dos ~25 s de transcrição que produziram a nota.
 
-**A sintaxe exata do `.base` será fixada contra a versão do Obsidian instalada na máquina,
-no momento de implementar.** O formato é recente e mudou entre versões; escrever de
-memória aqui produziria arquivo quebrado. O que este spec fixa é a semântica acima.
+Este spec descrevia originalmente três arquivos `.base` na raiz. Ver §15.
 
 ## 11. Migração
 
@@ -387,3 +387,28 @@ firmware.
 O benefício prático da separação: a fase 1 entrega sozinha dois dos três usos que o vault
 precisa servir — reler na ordem de leitura e caçar o que ficou aberto — e a fase 2
 entrega o terceiro. Se a fase 2 atrasar, nada do que a fase 1 fez fica pela metade.
+
+
+## 15. Decisões revertidas em uso
+
+Registradas com o motivo, porque as duas foram tomadas com argumento e desfeitas com
+argumento melhor — vindo de usar o resultado, que é evidência que nenhum desenho no
+papel produz.
+
+**Views de Bases → pastas por tipo.** O desenho original punha o eixo de tipo em três
+arquivos `.base`, com o argumento de que uma view lê o frontmatter e por isso não pode
+dessincronizar. Argumento correto e insuficiente: o pedido era "abrir o Obsidian e **ler**
+minhas anotações", e uma Base renderiza uma tabela. Tabela é planilha — linha de metadados
+não se lê. `bases.py` foi apagado junto com as views; código que gera arquivo que ninguém
+quer é pior que código removido. O que se perdeu foi a visão entre livros, que pasta não
+dá: uma pasta é sempre dentro de um livro.
+
+**Nome por posição → nome por data.** `08-012438 Título.md` existia para dar ordem de
+leitura numa listagem. Com as notas em três pastas, essa ordem deixou de estar na
+listagem e passou a estar no resumo do capítulo — e o nome ficou carregando um código
+que não se lê. `2026-09-08 1205 - Título.md` diz algo a quem olha.
+
+**O que sobreviveu às duas reversões:** o `kind` no frontmatter, a resolução de capítulo
+pelo trecho, a correção de recall, os dois resumos e a distinção entre fonte e derivado.
+Nenhuma das reversões tocou nisso, o que sugere que a fronteira entre *o que o bridge
+sabe* e *como o vault mostra* ficou no lugar certo.
