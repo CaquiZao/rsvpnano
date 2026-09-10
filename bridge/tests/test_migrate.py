@@ -396,3 +396,73 @@ def test_a_note_without_a_usable_date_keeps_its_name(tmp_path):
     )
     migrate.apply_migration(vault, dry_run=False)
     assert (folder / "sem data.md").is_file()
+
+
+def migrated_book(tmp_path, *, epub_name="livro.epub", dir_name="livro") -> Path:
+    """A book already in the current layout, with one epub in fonte/."""
+    vault = tmp_path / "Reading"
+    book = vault / "Livros" / dir_name
+    (book / "fonte").mkdir(parents=True)
+    # As tres pastas, senao o passo que preenche as faltantes conta como mudanca.
+    for kind in ("Anotações", "Perguntas", "Recall"):
+        (book / kind).mkdir()
+    make_epub_with(book / "fonte" / epub_name, [CH_ONE, CH_TWO])
+    return vault
+
+
+def test_renaming_the_epub_carries_the_book_directory(tmp_path):
+    # O nome do arquivo e a identidade do livro: e o stem que o device manda.
+    vault = migrated_book(tmp_path, epub_name="Sapiens.epub", dir_name="epdf.pub_feio")
+    migrate.apply_migration(vault, dry_run=False)
+    assert (vault / "Livros" / "Sapiens" / "fonte" / "Sapiens.epub").is_file()
+    assert not (vault / "Livros" / "epdf.pub_feio").exists()
+
+
+def test_renaming_the_book_carries_the_derived_files(tmp_path):
+    vault = migrated_book(tmp_path, epub_name="Sapiens.epub", dir_name="epdf.pub_feio")
+    fonte = vault / "Livros" / "epdf.pub_feio" / "fonte"
+    (fonte / "epdf.pub_feio.md").write_text("texto convertido", encoding="utf-8")
+    (fonte / "epdf.pub_feio.chapters.json").write_text("{}", encoding="utf-8")
+
+    migrate.apply_migration(vault, dry_run=False)
+    novo = vault / "Livros" / "Sapiens" / "fonte"
+    assert (novo / "Sapiens.md").read_text(encoding="utf-8") == "texto convertido"
+    assert (novo / "Sapiens.chapters.json").is_file()
+
+
+def test_renaming_the_book_carries_its_notes(tmp_path):
+    vault = migrated_book(tmp_path, epub_name="Sapiens.epub", dir_name="epdf.pub_feio")
+    notas = vault / "Livros" / "epdf.pub_feio" / "Anotações"
+    (notas / "2026-09-08 1205 - Crítica à tese.md").write_text(NOTE, encoding="utf-8")
+    migrate.apply_migration(vault, dry_run=False)
+    assert (
+        vault / "Livros" / "Sapiens" / "Anotações" / "2026-09-08 1205 - Crítica à tese.md"
+    ).is_file()
+
+
+def test_a_matching_name_is_left_alone(tmp_path):
+    vault = migrated_book(tmp_path)
+    assert migrate.apply_migration(vault, dry_run=False) == []
+
+
+def test_two_epubs_make_the_identity_ambiguous_so_nothing_moves(tmp_path):
+    # Adivinhar qual dos dois nomeia o livro seria pior que nao mexer.
+    vault = migrated_book(tmp_path, epub_name="a.epub", dir_name="livro")
+    make_epub_with(vault / "Livros" / "livro" / "fonte" / "b.epub", [CH_ONE])
+    migrate.apply_migration(vault, dry_run=False)
+    assert (vault / "Livros" / "livro").is_dir()
+
+
+def test_a_rename_that_would_collide_is_refused(tmp_path):
+    vault = migrated_book(tmp_path, epub_name="Sapiens.epub", dir_name="epdf.pub_feio")
+    (vault / "Livros" / "Sapiens").mkdir()
+    migrate.apply_migration(vault, dry_run=False)
+    # A pasta de origem sobrevive: sobrescrever um livro existente seria pior.
+    assert (vault / "Livros" / "epdf.pub_feio").is_dir()
+
+
+def test_renaming_the_book_respects_dry_run(tmp_path):
+    vault = migrated_book(tmp_path, epub_name="Sapiens.epub", dir_name="epdf.pub_feio")
+    assert migrate.apply_migration(vault, dry_run=True)
+    assert (vault / "Livros" / "epdf.pub_feio").is_dir()
+    assert not (vault / "Livros" / "Sapiens").exists()

@@ -384,6 +384,52 @@ def _orphan_epubs(
     return moves
 
 
+def _rename_book_dirs(vault_path: Path, *, dry_run: bool) -> list[Move]:
+    """Make a book's directory follow the name of the epub inside it.
+
+    The epub's filename is the book's identity: it is the stem the device sends
+    with every recording, and what `epub_source` looks for. Renaming the epub —
+    to get rid of a name like `epdf.pub_sapiens-uma-breve-historia-da-humanidade`
+    — therefore has to carry the directory and the derived files with it, or the
+    bridge stops finding the book it just converted.
+
+    Only acts when the directory holds exactly one epub. Two epubs mean the
+    directory's identity is ambiguous, and guessing would be worse than leaving
+    it alone.
+    """
+    books = vault_path / layout.BOOKS_DIR
+    if not books.is_dir():
+        return []
+
+    moves: list[Move] = []
+    for folder in sorted(p for p in books.iterdir() if p.is_dir()):
+        source = folder / layout.SOURCE_DIR
+        epubs = sorted(source.glob("*.epub")) if source.is_dir() else []
+        if len(epubs) != 1 or epubs[0].stem == folder.name:
+            continue
+
+        stem = epubs[0].stem
+        target = books / slugify(stem)
+        if target.exists():
+            log.warning(
+                "não renomeei %s: %s já existe", folder.name, target.name
+            )
+            continue
+
+        moves.append(Move(folder, target, "livro renomeado"))
+        if dry_run:
+            continue
+        # The derived files carry the old stem in their names; they are rebuilt
+        # from the epub anyway, so renaming them keeps the pair consistent
+        # without a conversion.
+        for derived in sorted(source.iterdir()):
+            if derived == epubs[0] or not derived.name.startswith(folder.name):
+                continue
+            derived.replace(derived.with_name(stem + derived.name[len(folder.name) :]))
+        folder.replace(target)
+    return moves
+
+
 def _rename_to_dates(
     vault_path: Path, *, dry_run: bool
 ) -> tuple[list[Move], dict[str, dict[str, str]]]:
@@ -526,6 +572,10 @@ def apply_migration(vault_path: Path, *, dry_run: bool = True) -> list[Move]:
         moves += _migrate_board(vault_path, stem, renames, dry_run=dry_run)
 
     moves += _orphan_epubs(vault_path, {m.src for m in moves}, dry_run=dry_run)
+
+    # Before anything reads a book directory by name: the epub inside it may
+    # have been renamed, and the directory has to follow.
+    moves += _rename_book_dirs(vault_path, dry_run=dry_run)
 
     # Notes that reached their kind directory under the old coded name.
     renamed, renames = _rename_to_dates(vault_path, dry_run=dry_run)
