@@ -5,6 +5,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "voice/CaptureLimits.h"
 #include "voice/VoiceNoteMeta.h"
 
 namespace voice {
@@ -34,6 +35,9 @@ namespace voice {
         bool takeFinished();
         // Duration of the recording that just finished, for the confirmation line.
         uint32_t lastDurationMs() const;
+        // Why an unlimited recording ended on its own, so the reader is told
+        // rather than left wondering why it stopped.
+        CaptureStop stopReason() const;
 
     private:
         static void taskEntry(void* self);
@@ -48,6 +52,7 @@ namespace voice {
         volatile uint32_t lastDurationMs_ = 0;
         volatile uint8_t level_ = 0;
         const char* error_ = nullptr;
+        volatile CaptureStop stopReason_ = CaptureStop::None;
     };
 
 } // namespace voice

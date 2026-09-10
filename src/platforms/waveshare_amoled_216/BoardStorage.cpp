@@ -22,6 +22,12 @@ namespace Board::Storage {
         return SD_MMC.cardSize();
     }
 
+    uint64_t freeBytes() {
+        const uint64_t total = SD_MMC.totalBytes();
+        const uint64_t used = SD_MMC.usedBytes();
+        return total > used ? total - used : 0;
+    }
+
     CardType cardType() {
         return static_cast<CardType>(SD_MMC.cardType());
     }

@@ -88,6 +88,10 @@ namespace voice {
         return lastDurationMs_;
     }
 
+    CaptureStop Recorder::stopReason() const {
+        return stopReason_;
+    }
+
     void Recorder::taskEntry(void* self) {
         static_cast<Recorder*>(self)->run();
     }
@@ -116,6 +120,7 @@ namespace voice {
         }
 
         lastDurationMs_ = result.durationMs;
+        stopReason_ = result.stopReason;
         error_ = result.ok ? nullptr : result.error;
         level_ = 0;
         finished_ = true;

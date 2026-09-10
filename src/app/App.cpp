@@ -678,7 +678,20 @@ void App::finishVoiceNote(uint32_t nowMs) {
 
     char detail[48] = {};
     std::snprintf(detail, sizeof(detail), "%lus na fila", static_cast<unsigned long>(seconds));
-    showTransientStatus("Nota de voz", failure != nullptr ? failure : "Gravada", detail, 1200,
+    // A recording that ended on its own has to say why, or it reads as a fault.
+    const char* headline = "Gravada";
+    switch (voiceRecorder_.stopReason()) {
+    case voice::CaptureStop::Battery:
+        headline = "Parou: bateria fraca";
+        break;
+    case voice::CaptureStop::Disk:
+        headline = "Parou: cartao cheio";
+        break;
+    case voice::CaptureStop::None:
+        break;
+    }
+    showTransientStatus("Nota de voz", failure != nullptr ? failure : headline, detail,
+                        voiceRecorder_.stopReason() == voice::CaptureStop::None ? 1200 : 2200,
                         screens::Screen::Reader);
 }
 

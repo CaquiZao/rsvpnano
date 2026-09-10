@@ -27,6 +27,9 @@ namespace Board::Storage {
     bool mount(const char* mountPoint, int frequencyKhz);
     void end();
     uint64_t cardSize();
+    // Bytes still writable. Zero when the card is full or cannot report,
+    // which callers must treat as "no room" rather than "unknown".
+    uint64_t freeBytes();
     CardType cardType();
     bool supportsFrequencySelection();
     bool setSdMmcPins();

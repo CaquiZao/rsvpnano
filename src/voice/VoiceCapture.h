@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <functional>
 
+#include "voice/CaptureLimits.h"
+
 namespace voice {
 
     struct CaptureResult {
@@ -10,6 +12,9 @@ namespace voice {
         uint32_t durationMs = 0;
         uint32_t framesWritten = 0;
         const char* error = nullptr;
+        // Why an unlimited recording ended by itself. None means the caller
+        // asked, or the ceiling was reached.
+        CaptureStop stopReason = CaptureStop::None;
     };
 
     struct CaptureCallbacks {

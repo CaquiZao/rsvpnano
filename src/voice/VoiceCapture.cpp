@@ -8,7 +8,9 @@
 #include <algorithm>
 
 #include "board/BoardAudio.h"
+#include "board/BoardPower.h"
 #include "board/BoardStorage.h"
+#include "voice/CaptureLimits.h"
 #include "voice/WavWriter.h"
 
 namespace voice {
@@ -93,6 +95,10 @@ namespace voice {
 
         uint32_t slowestBlockMs = 0;
         uint32_t blocks = 0;
+        // Reading the gauge and the card costs more than writing the audio does, so
+        // this is checked every few seconds rather than every block.
+        constexpr uint32_t kLimitCheckEveryMs = 5000;
+        uint32_t lastLimitCheckMs = millis();
         while ((millis() - startedAt) < limitMs) {
             const uint32_t blockStartedAt = millis();
             const size_t read = Board::Audio::readSamples(block, kBlockSamples, 1000);
@@ -103,6 +109,28 @@ namespace voice {
             if (auto written = writer.writeSamples(block, read); !written) {
                 failure = "SD write failed";
                 break;
+            }
+            if (millis() - lastLimitCheckMs >= kLimitCheckEveryMs) {
+                lastLimitCheckMs = millis();
+                Board::Power::BatteryStatus status;
+                const uint8_t percent = Board::Power::readBatteryStatus(status) ? status.percent : 0;
+                switch (shouldStopCapture(percent, Board::Storage::freeBytes())) {
+                case CaptureStop::Battery:
+                    // Not a failure: what was said is kept, whole, with its header
+                    // written. Losing the note here would be the actual failure.
+                    stoppedByCaller = true;
+                    result.stopReason = CaptureStop::Battery;
+                    break;
+                case CaptureStop::Disk:
+                    stoppedByCaller = true;
+                    result.stopReason = CaptureStop::Disk;
+                    break;
+                case CaptureStop::None:
+                    break;
+                }
+                if (stoppedByCaller) {
+                    break;
+                }
             }
             if (callbacks != nullptr && callbacks->onBlock) {
                 // One level per 16 ms slice rather than one per block. The card wants

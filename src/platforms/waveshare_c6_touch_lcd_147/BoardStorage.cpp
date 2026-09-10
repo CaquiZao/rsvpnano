@@ -28,6 +28,12 @@ namespace Board::Storage {
         return SD.cardSize();
     }
 
+    uint64_t freeBytes() {
+        const uint64_t total = SD.totalBytes();
+        const uint64_t used = SD.usedBytes();
+        return total > used ? total - used : 0;
+    }
+
     CardType cardType() {
         return static_cast<CardType>(SD.cardType());
     }
