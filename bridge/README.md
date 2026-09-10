@@ -88,6 +88,32 @@ curl -X POST http://localhost:8787/v1/notes \
 O WAV precisa ser **PCM 16 kHz mono 16-bit** — é o que o device grava e o que o Handy
 exige. Para converter: `ffmpeg -i entrada.m4a -ar 16000 -ac 1 -c:a pcm_s16le nota.wav`.
 
+## Quando uma nota é recusada
+
+O `POST /v1/notes` responde `400` quando o meta não é JSON, quando o WAV não é
+utilizável, ou quando a gravação tem menos de um segundo. Nesses casos o áudio **não é
+apagado**: vai para `<audio_store>/rejected/`, e o motivo entra no log com o id da nota.
+
+A recusa é o momento em que a gravação vale mais, não menos. O device lê só a linha de
+status da resposta — de propósito, drenar o corpo custaria tempo de rádio — então um
+motivo que viaja apenas no JSON de resposta não chega a ninguém. E o device trata
+qualquer 4xx como definitivo, tirando a nota da fila. Enquanto as duas pontas
+descartavam a própria cópia, uma recusa apagava a gravação dos dois lados e ainda
+reportava sucesso na tela.
+
+Quando é o meta que está quebrado, os bytes exatos que o firmware enviou ficam ao lado
+do áudio num `<id>.meta.txt`. "Não é JSON válido" diz qual camada falhou e nada sobre
+como.
+
+Duas recusas acontecem **antes** do endpoint rodar: corpo que o parser não consegue ler
+(`400`) e formulário com campo faltando (`422`). Essas também vão para o log, com o
+`content-type` e o tamanho declarado do corpo, porque o que quebra nelas é o framing do
+multipart e não o conteúdo.
+
+No device, uma nota recusada é **estacionada** em vez de apagada: o `.wav` e o `.json`
+ganham o sufixo `.parked` em `/voice` no cartão, ficam fora da fila e nunca são
+varridos. A tela diz "Bridge recusou a nota" em vez de contar a recusa como entrega.
+
 ## Testes
 
 ```bash

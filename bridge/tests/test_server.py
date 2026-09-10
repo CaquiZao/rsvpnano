@@ -1,4 +1,5 @@
 import json
+import logging
 import struct
 
 from fastapi.testclient import TestClient
@@ -108,3 +109,64 @@ def test_health_endpoint(tmp_path):
     c, _ = client(tmp_path)
     assert c.get("/v1/health").status_code == 200
     assert c.get("/v1/health").json()["status"] == "ok"
+
+
+def test_logs_why_a_note_was_refused(tmp_path, caplog):
+    c, _ = client(tmp_path)
+    with caplog.at_level(logging.WARNING, logger="handy_bridge.server"):
+        post_note(c, audio=wav_bytes()[:44] + bytes(100))
+    assert "20260907-143211" in caplog.text
+    assert "short" in caplog.text
+
+
+def test_keeps_refused_audio_for_diagnosis(tmp_path):
+    c, cfg = client(tmp_path)
+    tiny = wav_bytes()[:44] + bytes(100)
+    post_note(c, audio=tiny)
+    assert list(cfg.audio_store.glob("*.wav")) == []
+    kept = list((cfg.audio_store / "rejected").glob("*.wav"))
+    assert len(kept) == 1
+    assert kept[0].read_bytes() == tiny
+
+
+def test_keeps_audio_when_meta_is_unreadable(tmp_path):
+    c, cfg = client(tmp_path)
+    c.post(
+        "/v1/notes",
+        files={"audio": ("20260907-143211.wav", wav_bytes(), "audio/wav")},
+        data={"meta": "{not json"},
+    )
+    kept = list((cfg.audio_store / "rejected").glob("*.wav"))
+    assert len(kept) == 1
+
+
+def test_keeps_unreadable_meta_next_to_its_audio(tmp_path):
+    c, cfg = client(tmp_path)
+    c.post(
+        "/v1/notes",
+        files={"audio": ("20260907-143211.wav", wav_bytes(), "audio/wav")},
+        data={"meta": '{"clock_synced":tru'},
+    )
+    kept = cfg.audio_store / "rejected" / "20260907-143211.meta.txt"
+    assert kept.read_text(encoding="utf-8") == '{"clock_synced":tru'
+
+
+def test_logs_a_body_the_parser_cannot_read(tmp_path, caplog):
+    c, _ = client(tmp_path)
+    with caplog.at_level(logging.WARNING, logger="handy_bridge.server"):
+        resp = c.post(
+            "/v1/notes",
+            content=b"not a multipart body at all",
+            headers={"Content-Type": "multipart/form-data; boundary=rsvpnanoVoiceNoteBoundary"},
+        )
+    assert resp.status_code == 400
+    assert "multipart/form-data" in caplog.text
+    assert "27" in caplog.text  # o tamanho do corpo que chegou
+
+
+def test_logs_a_request_missing_its_audio(tmp_path, caplog):
+    c, _ = client(tmp_path)
+    with caplog.at_level(logging.WARNING, logger="handy_bridge.server"):
+        resp = c.post("/v1/notes", data={"meta": "{}"})
+    assert resp.status_code == 422
+    assert "audio" in caplog.text

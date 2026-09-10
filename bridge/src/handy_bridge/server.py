@@ -7,8 +7,14 @@ import logging
 from pathlib import Path
 from typing import Callable
 
-from fastapi import FastAPI, Form, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Form, Request, UploadFile
+from fastapi.exception_handlers import (
+    http_exception_handler,
+    request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from handy_bridge import wav as wav_mod
 from handy_bridge.config import Config
@@ -17,11 +23,58 @@ from handy_bridge.pipeline import IncomingNote
 log = logging.getLogger(__name__)
 
 MIN_AUDIO_SECONDS = 1.0
+# Where a refused recording goes instead of being deleted.
+REJECTED_DIR = "rejected"
+
+
+def refuse(target: Path, note_id: str, reason: str, meta: str | None = None) -> JSONResponse:
+    """Answer 400, keep the audio, and say why somewhere someone reads.
+
+    Both halves matter and both were missing. The device reads the status line
+    and nothing else -- draining the body would cost radio time -- so a reason
+    that only travels in the response reaches no one at all. And a refusal is
+    precisely when the recording is most worth keeping: the device treats 4xx as
+    final and deletes its own copy, so what is here is the last one there is.
+    """
+    kept = target.parent / REJECTED_DIR
+    kept.mkdir(parents=True, exist_ok=True)
+    target.replace(kept / target.name)
+    # The sidecar only when the sidecar is what broke. It is written by the
+    # firmware, so its exact bytes are the bug report -- "not valid JSON" alone
+    # says which layer failed and nothing about how.
+    if meta is not None:
+        (kept / f"{note_id}.meta.txt").write_text(meta, encoding="utf-8")
+    log.warning("refused note %s: %s (audio kept in %s)", note_id, reason, REJECTED_DIR)
+    return JSONResponse({"error": reason}, status_code=400)
 
 
 def create_app(cfg: Config, submit: Callable[[IncomingNote], None] | None = None) -> FastAPI:
     app = FastAPI(title="handy-bridge")
     hand_off = submit or (lambda incoming: None)
+
+    def describe(request: Request) -> str:
+        return (
+            f"content-type={request.headers.get('content-type', '?')}, "
+            f"declared-length={request.headers.get('content-length', '?')}"
+        )
+
+    # Two refusals happen before the endpoint ever runs: Starlette rejects a body it
+    # cannot parse, and FastAPI rejects a form with a field missing. Both answer 4xx,
+    # and the device deletes its only copy of the recording over any 4xx -- so a bare
+    # status code in the access log is a note lost with no way to ask why. Framing is
+    # exactly what breaks here, so the request's own shape is what gets logged.
+    @app.exception_handler(StarletteHTTPException)
+    async def log_http_refusal(request: Request, exc: StarletteHTTPException) -> Response:
+        log.warning("refused %s %s: %s (%s)", request.method, request.url.path, exc.detail,
+                    describe(request))
+        return await http_exception_handler(request, exc)
+
+    @app.exception_handler(RequestValidationError)
+    async def log_validation_refusal(request: Request, exc: RequestValidationError) -> Response:
+        fields = ", ".join(".".join(str(part) for part in err["loc"]) for err in exc.errors())
+        log.warning("refused %s %s: unusable fields [%s] (%s)", request.method, request.url.path,
+                    fields, describe(request))
+        return await request_validation_exception_handler(request, exc)
 
     @app.get("/v1/health")
     def health() -> dict:
@@ -29,27 +82,27 @@ def create_app(cfg: Config, submit: Callable[[IncomingNote], None] | None = None
 
     @app.post("/v1/notes")
     async def receive_note(audio: UploadFile, meta: str = Form(...)) -> JSONResponse:
-        try:
-            parsed_meta = json.loads(meta)
-        except json.JSONDecodeError:
-            return JSONResponse({"error": "meta is not valid JSON"}, status_code=400)
-
         note_id = Path(audio.filename or "note").stem
         cfg.audio_store.mkdir(parents=True, exist_ok=True)
         target = cfg.audio_store / f"{note_id}.wav"
+
+        # On disk before anything is validated, including the sidecar: the audio is
+        # the one part of this request nobody can reconstruct, and every check below
+        # is a reason to hold on to it rather than a reason to drop it.
         target.write_bytes(await audio.read())
+
+        try:
+            parsed_meta = json.loads(meta)
+        except json.JSONDecodeError:
+            return refuse(target, note_id, "meta is not valid JSON", meta=meta)
 
         try:
             info = wav_mod.inspect(target)
         except wav_mod.InvalidWav as exc:
-            target.unlink(missing_ok=True)
-            return JSONResponse({"error": f"invalid WAV: {exc}"}, status_code=400)
+            return refuse(target, note_id, f"invalid WAV: {exc}")
 
         if info.duration_s < MIN_AUDIO_SECONDS:
-            target.unlink(missing_ok=True)
-            return JSONResponse(
-                {"error": f"audio too short: {info.duration_s:.2f}s"}, status_code=400
-            )
+            return refuse(target, note_id, f"audio too short: {info.duration_s:.2f}s")
 
         # Acknowledge as soon as the audio is safely on disk; transcription is async
         # so the device can drop its radio instead of waiting on inference.
