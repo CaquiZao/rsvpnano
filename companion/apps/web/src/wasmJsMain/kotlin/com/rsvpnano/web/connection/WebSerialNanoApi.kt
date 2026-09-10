@@ -25,15 +25,16 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -49,7 +50,7 @@ internal object BrowserSerial {
 
     fun connect(presenter: CompanionPresenter) {
         scope.launch {
-            runCatching { api.open() }
+            runCatching { api.open(onDisconnect = presenter::reportConnectionFailure) }
                 .onSuccess {
                     presenter.connectEndpoint(
                         NanoEndpoint("usb://active", RememberedNano("USB reader")),
@@ -63,7 +64,7 @@ internal object BrowserSerial {
     }
 
     suspend fun connectAuthorized(presenter: CompanionPresenter): Boolean {
-        return runCatching { api.open(authorizedOnly = true) }
+        return runCatching { api.open(authorizedOnly = true, onDisconnect = presenter::reportConnectionFailure) }
             .map { opened ->
                 if (opened) {
                     presenter.connectEndpoint(
@@ -93,19 +94,20 @@ internal fun requestUsbConnection(presenter: CompanionPresenter) = BrowserSerial
 internal suspend fun reconnectAuthorizedUsb(presenter: CompanionPresenter): Boolean =
     BrowserSerial.connectAuthorized(presenter)
 
-internal class WebSerialNanoApi : NanoApi {
+internal class WebSerialNanoApi(
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+) : NanoApi {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val requestMutex = Mutex()
     private val sessionMutex = Mutex()
     private val writeMutex = Mutex()
     private var frames = Channel<SerialFrame>(Channel.UNLIMITED)
     private var readerJob: Job? = null
-    private var heartbeatJob: Job? = null
     private var nextRequestId = 1u
     private var opened = false
+    private var onDisconnect: (String) -> Unit = {}
 
-    suspend fun open(authorizedOnly: Boolean = false): Boolean = sessionMutex.withLock {
+    suspend fun open(authorizedOnly: Boolean = false, onDisconnect: (String) -> Unit = {}): Boolean = sessionMutex.withLock {
         closeSession()
         if (authorizedOnly) {
             if (!bridgeOpenAuthorized()) return false
@@ -119,26 +121,25 @@ internal class WebSerialNanoApi : NanoApi {
                 while (true) {
                     text = (text + bridgeRead().decodeToString()).takeLast(4096)
                     when {
-                        "RSVPNANO/COMPANION/1 READY" in text -> return@withTimeout text
+                        "RSVPNANO/COMPANION/1 READY" in text && '\n' in text.substringAfter("RSVPNANO/COMPANION/1 READY") -> return@withTimeout text
                         "BUSY MSC" in text -> throw NanoClientError("Exit USB Sync on the Nano before connecting the web companion.")
                         "UNSUPPORTED" in text -> throw NanoClientError("This firmware does not support USB companion protocol 1.")
                     }
                 }
                 @Suppress("UNREACHABLE_CODE") text
             }
-            check("READY" in greeting)
-            opened = true
-            frames = Channel(Channel.UNLIMITED)
-            readerJob = scope.launch { readFrames() }
-            heartbeatJob = scope.launch {
-                while (isActive) {
-                    delay(5_000)
-                    runCatching { sendFrame(SerialFrame(SerialFrameType.Ping)) }
-                }
+            if ("RSVPNANO/COMPANION/1 READY persistent" !in greeting) {
+                throw NanoClientError("Update the Nano firmware to use persistent USB connections.")
             }
+            opened = true
+            this.onDisconnect = onDisconnect
+            frames = Channel(Channel.UNLIMITED)
+            val session = frames
+            readerJob = scope.launch { readFrames(session) }
+
             true
         } catch (error: Throwable) {
-            bridgeCloseIgnoringErrors()
+            withContext(NonCancellable) { bridgeCloseIgnoringErrors() }
             throw error
         }
     }
@@ -241,45 +242,52 @@ internal class WebSerialNanoApi : NanoApi {
         onProgress: ((Long, Long) -> Unit)? = null,
     ): SerialResponse = requestMutex.withLock {
         check(opened) { "Choose a USB port before using the USB companion." }
-        val requestId = nextRequestId++
-        val metadata = SerialRequestMetadata(method, path, query, contentType, body.size.toLong())
-        sendFrame(SerialFrame(SerialFrameType.Request, requestId, payload = json.encodeToString(SerialRequestMetadata.serializer(), metadata).encodeToByteArray()))
+        val session = frames
+        try {
+            val requestId = nextRequestId++
+            val metadata = SerialRequestMetadata(method, path, query, contentType, body.size.toLong())
+            sendFrame(SerialFrame(SerialFrameType.Request, requestId, payload = json.encodeToString(SerialRequestMetadata.serializer(), metadata).encodeToByteArray()), session)
 
-        var sequence = 0u
-        body.asList().chunked(SerialChunkBytes).forEach { values ->
-            val chunk = values.toByteArray()
-            sendFrame(SerialFrame(SerialFrameType.Data, requestId, sequence, chunk))
-            awaitFrame(requestId, SerialFrameType.Acknowledgement, sequence)
-            sequence++
-            onProgress?.invoke(minOf(sequence.toLong() * SerialChunkBytes, body.size.toLong()), body.size.toLong())
-        }
-        val end = SerialTransferEnd(body.size.toLong(), SerialFrameCodec.crc32(body))
-        sendFrame(SerialFrame(SerialFrameType.End, requestId, sequence, json.encodeToString(SerialTransferEnd.serializer(), end).encodeToByteArray()))
-
-        val responseFrame = awaitFrame(requestId, SerialFrameType.Response)
-        val response = json.decodeFromString(SerialResponseMetadata.serializer(), responseFrame.payload.decodeToString())
-        val responseBody = ArrayList<Byte>(response.totalBytes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
-        while (true) {
-            val frame = awaitFrame(requestId)
-            when (frame.type) {
-                SerialFrameType.Data -> {
-                    responseBody.addAll(frame.payload.asList())
-                    sendFrame(SerialFrame(SerialFrameType.Acknowledgement, requestId, frame.sequence))
-                }
-                SerialFrameType.End -> break
-                SerialFrameType.Error -> throw NanoClientError(frame.payload.decodeToString())
-                else -> Unit
+            var sequence = 0u
+            for (offset in body.indices step SerialChunkBytes) {
+                val chunk = body.copyOfRange(offset, minOf(offset + SerialChunkBytes, body.size))
+                sendFrame(SerialFrame(SerialFrameType.Data, requestId, sequence, chunk), session)
+                awaitFrame(session, requestId, SerialFrameType.Acknowledgement, sequence)
+                sequence++
+                onProgress?.invoke(minOf(sequence.toLong() * SerialChunkBytes, body.size.toLong()), body.size.toLong())
             }
+            val end = SerialTransferEnd(body.size.toLong(), SerialFrameCodec.crc32(body))
+            sendFrame(SerialFrame(SerialFrameType.End, requestId, sequence, json.encodeToString(SerialTransferEnd.serializer(), end).encodeToByteArray()), session)
+
+            val responseFrame = awaitFrame(session, requestId, SerialFrameType.Response)
+            val response = json.decodeFromString(SerialResponseMetadata.serializer(), responseFrame.payload.decodeToString())
+            val responseBody = ArrayList<Byte>(response.totalBytes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+            while (true) {
+                val frame = awaitFrame(session, requestId)
+                when (frame.type) {
+                    SerialFrameType.Data -> {
+                        responseBody.addAll(frame.payload.asList())
+                        sendFrame(SerialFrame(SerialFrameType.Acknowledgement, requestId, frame.sequence), session)
+                    }
+                    SerialFrameType.End -> break
+                    SerialFrameType.Error -> throw NanoClientError(frame.payload.decodeToString())
+                    else -> Unit
+                }
+            }
+            val bytes = responseBody.toByteArray()
+            if (bytes.size.toLong() != response.totalBytes) throw NanoClientError("USB response was interrupted.")
+            SerialResponse(response.status, bytes)
+        } catch (error: Throwable) {
+            // An unfinished exchange cannot safely share the next request's frame stream.
+            failSession(error, session)
+            throw error
         }
-        val bytes = responseBody.toByteArray()
-        if (bytes.size.toLong() != response.totalBytes) throw NanoClientError("USB response was interrupted.")
-        SerialResponse(response.status, bytes)
     }
 
-    private suspend fun awaitFrame(requestId: UInt, type: SerialFrameType? = null, sequence: UInt? = null): SerialFrame =
+    private suspend fun awaitFrame(session: Channel<SerialFrame>, requestId: UInt, type: SerialFrameType? = null, sequence: UInt? = null): SerialFrame =
         withTimeout(20_000) {
             while (true) {
-                val frame = frames.receive()
+                val frame = session.receive()
                 if (frame.type == SerialFrameType.Error && (frame.requestId == 0u || frame.requestId == requestId)) {
                     throw NanoClientError(frame.payload.decodeToString())
                 }
@@ -291,33 +299,45 @@ internal class WebSerialNanoApi : NanoApi {
             @Suppress("UNREACHABLE_CODE") error("Serial frame wait ended unexpectedly.")
         }
 
-    private suspend fun sendFrame(frame: SerialFrame) = writeMutex.withLock {
+    private suspend fun sendFrame(frame: SerialFrame, session: Channel<SerialFrame> = frames) = writeMutex.withLock {
+        check(opened && session === frames) { "The USB session has ended." }
         bridgeWrite(SerialFrameCodec.encode(frame))
     }
 
-    private suspend fun readFrames() {
+    private suspend fun readFrames(session: Channel<SerialFrame>) {
         val decoder = SerialFrameCodec.Decoder()
         try {
             while (scope.isActive && opened) {
                 decoder.feed(bridgeRead()).forEach { frame ->
-                    if (frame.type == SerialFrameType.Ping) sendFrame(SerialFrame(SerialFrameType.Pong))
-                    else frames.send(frame)
+                    when (frame.type) {
+                        SerialFrameType.Ping -> sendFrame(SerialFrame(SerialFrameType.Pong), session)
+                        SerialFrameType.Pong -> Unit
+                        SerialFrameType.Close -> throw NanoClientError("The Nano ended the USB session.")
+                        else -> session.send(frame)
+                    }
                 }
             }
-        } catch (_: CancellationException) {
-            throw CancellationException()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Throwable) {
-            opened = false
-            frames.close(error)
+            failSession(error, session)
         }
     }
 
-    private suspend fun closeSession() {
-        if (opened) runCatching { sendFrame(SerialFrame(SerialFrameType.Close)) }
+    private suspend fun failSession(error: Throwable, session: Channel<SerialFrame>) = withContext(NonCancellable) {
+        sessionMutex.withLock {
+            // An old read/request may finish failing after the user has already reconnected.
+            if (session !== frames || !opened) return@withLock
+            closeSession(error)
+            onDisconnect("USB connection lost. Reconnect and refresh to check whether the operation completed.")
+        }
+    }
+
+    private suspend fun closeSession(error: Throwable? = null) {
+        if (opened && error == null) runCatching { sendFrame(SerialFrame(SerialFrameType.Close)) }
         opened = false
-        heartbeatJob?.cancel()
         readerJob?.cancel()
-        frames.close()
+        frames.close(error)
         bridgeCloseIgnoringErrors()
     }
 
@@ -387,10 +407,10 @@ private suspend fun bridgeCloseIgnoringErrors() = suspendCancellableCoroutine { 
     serialClose { if (continuation.isActive) continuation.resume(Unit) }
 }
 
-@JsFun("""(ok, fail) => { (async () => { try { const key = 'rsvpnano.web.usbDevice'; let saved = null; try { saved = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { localStorage.removeItem(key); } const authorized = await navigator.serial.getPorts(); const matches = saved ? authorized.filter(port => { const info = port.getInfo(); return info.usbVendorId === saved.usbVendorId && info.usbProductId === saved.usbProductId; }) : []; const port = matches.length === 1 ? matches[0] : authorized.length === 1 ? authorized[0] : await navigator.serial.requestPort(); await port.open({ baudRate: 115200 }); const info = port.getInfo(); if (info.usbVendorId || info.usbProductId) localStorage.setItem(key, JSON.stringify({ usbVendorId: info.usbVendorId || 0, usbProductId: info.usbProductId || 0 })); globalThis.rsvpNanoSerial = { port, reader: port.readable.getReader(), writer: port.writable.getWriter() }; ok('ok'); } catch (error) { fail(error?.message || String(error)); } })(); }""")
+@JsFun("""(ok, fail) => { (async () => { try { const key = 'rsvpnano.web.usbDevice'; let saved = null; try { saved = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { localStorage.removeItem(key); } const authorized = await navigator.serial.getPorts(); const matches = saved ? authorized.filter(port => { const info = port.getInfo(); return info.usbVendorId === saved.usbVendorId && info.usbProductId === saved.usbProductId; }) : []; const port = matches.length === 1 ? matches[0] : authorized.length === 1 ? authorized[0] : await navigator.serial.requestPort(); await port.open({ baudRate: 115200 }); await port.setSignals({ dataTerminalReady: true, requestToSend: true }).catch(async error => { await port.close(); throw error; }); const info = port.getInfo(); if (info.usbVendorId || info.usbProductId) localStorage.setItem(key, JSON.stringify({ usbVendorId: info.usbVendorId || 0, usbProductId: info.usbProductId || 0 })); globalThis.rsvpNanoSerial = { port, reader: port.readable.getReader(), writer: port.writable.getWriter() }; ok('ok'); } catch (error) { fail(error?.message || String(error)); } })(); }""")
 private external fun serialOpen(ok: (String) -> Unit, fail: (String) -> Unit)
 
-@JsFun("""(ok, fail) => { (async () => { try { const key = 'rsvpnano.web.usbDevice'; let saved = null; try { saved = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { localStorage.removeItem(key); } const authorized = await navigator.serial.getPorts(); const matches = saved ? authorized.filter(port => { const info = port.getInfo(); return info.usbVendorId === saved.usbVendorId && info.usbProductId === saved.usbProductId; }) : authorized; if (matches.length !== 1) { ok(false); return; } const port = matches[0]; await port.open({ baudRate: 115200 }); const info = port.getInfo(); if (info.usbVendorId || info.usbProductId) localStorage.setItem(key, JSON.stringify({ usbVendorId: info.usbVendorId || 0, usbProductId: info.usbProductId || 0 })); globalThis.rsvpNanoSerial = { port, reader: port.readable.getReader(), writer: port.writable.getWriter() }; ok(true); } catch (error) { fail(error?.message || String(error)); } })(); }""")
+@JsFun("""(ok, fail) => { (async () => { try { const key = 'rsvpnano.web.usbDevice'; let saved = null; try { saved = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { localStorage.removeItem(key); } const authorized = await navigator.serial.getPorts(); const matches = saved ? authorized.filter(port => { const info = port.getInfo(); return info.usbVendorId === saved.usbVendorId && info.usbProductId === saved.usbProductId; }) : authorized; if (matches.length !== 1) { ok(false); return; } const port = matches[0]; await port.open({ baudRate: 115200 }); await port.setSignals({ dataTerminalReady: true, requestToSend: true }).catch(async error => { await port.close(); throw error; }); const info = port.getInfo(); if (info.usbVendorId || info.usbProductId) localStorage.setItem(key, JSON.stringify({ usbVendorId: info.usbVendorId || 0, usbProductId: info.usbProductId || 0 })); globalThis.rsvpNanoSerial = { port, reader: port.readable.getReader(), writer: port.writable.getWriter() }; ok(true); } catch (error) { fail(error?.message || String(error)); } })(); }""")
 private external fun serialOpenAuthorized(ok: (Boolean) -> Unit, fail: (String) -> Unit)
 
 @JsFun("""(ok, fail) => { const serial = globalThis.rsvpNanoSerial; if (!serial) { fail('No USB port is open.'); return; } serial.reader.read().then(({ value, done }) => { if (done || !value) { ok(''); return; } let text = ''; for (let i = 0; i < value.length; i++) text += String.fromCharCode(value[i]); ok(btoa(text)); }).catch(error => fail(error?.message || String(error))); }""")
@@ -399,7 +419,7 @@ private external fun serialRead(ok: (String) -> Unit, fail: (String) -> Unit)
 @JsFun("""(encoded, ok, fail) => { const serial = globalThis.rsvpNanoSerial; if (!serial) { fail('No USB port is open.'); return; } const text = atob(encoded); const bytes = new Uint8Array(text.length); for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i); serial.writer.write(bytes).then(() => ok('ok')).catch(error => fail(error?.message || String(error))); }""")
 private external fun serialWrite(encoded: String, ok: (String) -> Unit, fail: (String) -> Unit)
 
-@JsFun("""(done) => { (async () => { const serial = globalThis.rsvpNanoSerial; globalThis.rsvpNanoSerial = null; if (!serial) { done('ok'); return; } try { await serial.reader.cancel(); } catch (_) {} try { serial.reader.releaseLock(); } catch (_) {} try { await serial.writer.close(); } catch (_) {} try { serial.writer.releaseLock(); } catch (_) {} try { await serial.port.close(); } catch (_) {} done('ok'); })(); }""")
+@JsFun("""(done) => { (async () => { const serial = globalThis.rsvpNanoSerial; globalThis.rsvpNanoSerial = null; if (!serial) { done('ok'); return; } try { await serial.reader.cancel(); } catch (_) {} try { serial.reader.releaseLock(); } catch (_) {} try { await serial.writer.abort(); } catch (_) {} try { serial.writer.releaseLock(); } catch (_) {} try { await serial.port.close(); } catch (_) {} done('ok'); })(); }""")
 private external fun serialClose(done: (String) -> Unit)
 
 @JsFun("() => window.isSecureContext && ('serial' in navigator)")

@@ -3,6 +3,9 @@
 #include <glaze/json.hpp>
 
 #include <WiFi.h>
+#if !ARDUINO_USB_MODE
+#include <tusb.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -14,12 +17,12 @@
 #include "companion/CompanionApiModels.h"
 #include "companion/serial/CompanionBufferedRequest.h"
 #include "board/BoardStorage.h"
+#include "logging/Logger.h"
 #include "usb/UsbMassStorageManager.h"
 
 namespace {
 
     constexpr std::string_view kHandshake = "RSVPNANO/COMPANION/1\n";
-    constexpr uint32_t kSessionTimeoutMs = 15'000;
     constexpr size_t kMaximumJsonRequestBytes = 8 * 1024;
     constexpr uint64_t kMaximumRequestBytes = 256ULL * 1024ULL * 1024ULL;
     constexpr std::string_view kSpoolPath = "/.companion-usb-request.tmp";
@@ -74,9 +77,16 @@ void CompanionSerial::update(uint32_t nowMs) {
         return;
     }
 
-    readFrames(nowMs);
-    if (nowMs - lastTrafficMs_ >= kSessionTimeoutMs)
+#if ARDUINO_USB_MODE
+    if (!Serial) {
+#else
+    // Arduino's connection flag also tracks the bootloader reset sequence; use the actual CDC DTR state.
+    if (!tud_cdc_connected()) {
+#endif
         close();
+        return;
+    }
+    readFrames();
 }
 
 void CompanionSerial::close() {
@@ -84,7 +94,7 @@ void CompanionSerial::close() {
     decoder_.clear();
     handshake_.clear();
     resetRequest();
-    responseBody_.clear();
+    std::string{}.swap(responseBody_);
     responseRequestId_ = 0;
     responseSequence_ = 0;
     responseOffset_ = 0;
@@ -112,13 +122,16 @@ void CompanionSerial::readHandshake(uint32_t nowMs) {
             return;
         }
 
+        // Keep a complete upload chunk plus metadata queued while the app is busy with SD/NVS work.
+        if (Serial.setRxBufferSize(2 * companion::serial::kChunkBytes) == 0)
+            return;
         Serial.setDebugOutput(false);
-        Serial.print("RSVPNANO/COMPANION/1 READY\n");
+        Serial.print("RSVPNANO/COMPANION/1 READY persistent\n");
         Serial.flush();
         decoder_.clear();
         resetRequest();
         active_ = true;
-        lastTrafficMs_ = nowMs;
+        writeFailed_ = false;
         return;
     }
 }
@@ -245,22 +258,25 @@ void CompanionSerial::sendImprovResponse(improv::Command command, const std::vec
     sendImprov(improv::TYPE_RPC_RESPONSE, data);
 }
 
-void CompanionSerial::readFrames(uint32_t nowMs) {
+void CompanionSerial::readFrames() {
     std::array<uint8_t, 512> bytes{};
     while (Serial.available() > 0) {
         const size_t count = Serial.readBytes(bytes.data(), std::min<size_t>(Serial.available(), bytes.size()));
         if (count == 0)
             break;
-        lastTrafficMs_ = nowMs;
         decoder_.append(std::span{bytes}.first(count));
     }
-    for (auto& frame: decoder_.takeFrames())
-        handleFrame(std::move(frame), nowMs);
+    for (auto& frame: decoder_.takeFrames()) {
+        handleFrame(std::move(frame));
+        if (writeFailed_)
+            close();
+        if (!active_)
+            break;
+    }
 }
 
-void CompanionSerial::handleFrame(companion::serial::Frame frame, uint32_t nowMs) {
+void CompanionSerial::handleFrame(companion::serial::Frame frame) {
     using companion::serial::FrameType;
-    lastTrafficMs_ = nowMs;
     switch (frame.type) {
     case FrameType::Ping:
         sendFrame({.type = FrameType::Pong});
@@ -368,7 +384,9 @@ void CompanionSerial::handleRequestEnd(const companion::serial::Frame& frame) {
     if (requestSpooled_)
         requestFile_ = Board::Storage::filesystem().open(kSpoolPath.data(), FILE_READ);
 
+    Logger::checkpoint("companion_usb_dispatch");
     dispatchRequest(buffered);
+    Logger::checkpoint("companion_usb_complete");
     resetRequest();
 }
 
@@ -546,6 +564,7 @@ void CompanionSerial::dispatchRequest(companion::BufferedRequest& buffered) {
 }
 
 void CompanionSerial::sendResponse(uint32_t requestId, int status, std::string body) {
+    Logger::checkpoint("companion_usb_response");
     ResponseMetadata metadata{.status = status, .totalBytes = body.size()};
     std::string responseJson;
     if (!companion::api::encode(metadata, responseJson))
@@ -556,7 +575,7 @@ void CompanionSerial::sendResponse(uint32_t requestId, int status, std::string b
     responseRequestId_ = requestId;
     responseSequence_ = 0;
     responseOffset_ = 0;
-    responseBody_.assign(body.begin(), body.end());
+    responseBody_ = std::move(body);
     sendNextResponseChunk();
 }
 
@@ -567,7 +586,7 @@ void CompanionSerial::sendNextResponseChunk() {
         sendFrame({.type = companion::serial::FrameType::End,
                    .requestId = responseRequestId_,
                    .sequence = responseSequence_});
-        responseBody_.clear();
+        std::string{}.swap(responseBody_);
         responseRequestId_ = 0;
         responseSequence_ = 0;
         responseOffset_ = 0;
@@ -598,9 +617,18 @@ void CompanionSerial::sendProtocolError(uint32_t requestId, std::string message)
 }
 
 void CompanionSerial::sendFrame(companion::serial::Frame frame) {
+    if (writeFailed_)
+        return;
     const auto bytes = companion::serial::encode(frame);
-    if (!bytes.empty())
-        Serial.write(bytes.data(), bytes.size());
+    for (size_t offset = 0; offset < bytes.size();) {
+        const size_t written = Serial.write(bytes.data() + offset, bytes.size() - offset);
+        if (written == 0) {
+            // Finish unwinding the active request before releasing its buffers.
+            writeFailed_ = true;
+            return;
+        }
+        offset += written;
+    }
 }
 
 void CompanionSerial::resetRequest() {

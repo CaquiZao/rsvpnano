@@ -539,12 +539,15 @@ internal fun ColumnScope.AppearanceWorkspace(presenter: CompanionPresenter, stat
         if (file != null) scope.launch { presenter.installLocalePackFile(file.name, file.readBytes()) }
     }
 
-    LaunchedEffect(state.isConnected) {
+    LaunchedEffect(state.isConnected, state.baseUrl) {
         if (!state.isConnected) return@LaunchedEffect
         presenter.refreshSettings()
         presenter.refreshThemes()
         presenter.refreshFonts()
         presenter.refreshLocales()
+    }
+    LaunchedEffect(state.isConnected, state.baseUrl, state.settings?.updates) {
+        if (!state.isConnected || state.settings == null) return@LaunchedEffect
         presenter.refreshThemeCatalog()
         presenter.refreshFontCatalog()
         presenter.refreshLocaleCatalog()
@@ -938,10 +941,11 @@ private fun ReadingVisibilitySettings(presenter: CompanionPresenter, reading: Na
         ChoiceRow("Battery label", reading.batteryLabel, listOf("percentage" to "Percentage", "timeRemaining" to "Time left", "voltage" to "Voltage")) { value ->
             presenter.updateSettings { it.withBatteryLabel(value) }
         }
-        ToggleRow("Battery icon", reading.batteryIconVisible) { value -> presenter.updateSettings { it.withBatteryIconVisible(value) } }
-        ToggleRow("Battery while reading", reading.batteryVisibleWhileReading) { value -> presenter.updateSettings { it.withReadingBattery(value) } }
-        ToggleRow("Chapter while reading", reading.chapterVisibleWhileReading) { value -> presenter.updateSettings { it.withReadingChapter(value) } }
-        ToggleRow("Progress while reading", reading.progressVisibleWhileReading) { value -> presenter.updateSettings { it.withReadingProgress(value) } }
+        ChoiceRow("Battery icon", reading.batteryIconVisibility, NanoSettingsSchema.visibilityOptions) { value -> presenter.updateSettings { it.withBatteryIconVisibility(value) } }
+        ChoiceRow("Battery label visibility", reading.batteryLabelVisibility, NanoSettingsSchema.visibilityOptions) { value -> presenter.updateSettings { it.withBatteryLabelVisibility(value) } }
+        ChoiceRow("Chapter visibility", reading.chapterVisibility, NanoSettingsSchema.visibilityOptions) { value -> presenter.updateSettings { it.withChapterVisibility(value) } }
+        ChoiceRow("Progress visibility", reading.progressVisibility, NanoSettingsSchema.visibilityOptions) { value -> presenter.updateSettings { it.withProgressVisibility(value) } }
+        ChoiceRow("Arrows visibility", reading.arrowsVisibility, NanoSettingsSchema.visibilityOptions) { value -> presenter.updateSettings { it.withArrowsVisibility(value) } }
     }
 }
 

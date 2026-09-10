@@ -27,7 +27,7 @@ successful load expands it to the full canonical document. For example:
 [reading]
 wpm = 350
 batteryLabel = "percentage"
-batteryIconVisible = true
+batteryIconVisibility = "always"
 
 [reading.typography]
 fontId = "literata"
@@ -40,6 +40,11 @@ selectedThemeId = "default"
 [network]
 wifiSsid = "Home"
 ```
+
+Reader elements use `batteryIconVisibility`, `batteryLabelVisibility`, `chapterVisibility`,
+`progressVisibility`, and `arrowsVisibility`. Each accepts `"always"`, `"reading"`, `"paused"`,
+or `"never"`. The on-device editor toggles the selected Reading or Paused state without
+changing visibility in the other state. Typography is shared between both states.
 
 Runtime code reads settings from `SettingsStore` in RAM. Accepted changes are saved after a short
 debounce rather than writing flash for every UI step. NVS stores the same canonical TOML as one
@@ -57,6 +62,12 @@ feeds = ["https://example.com/feed.xml", "https://example.org/rss"]
 ```
 
 Whitespace and duplicate URLs are removed when the configuration is saved.
+
+Each check visits up to the first eight configured feeds and saves at most 12 new articles
+in total. Already-synced articles and empty entries do not consume that allowance; run
+another check to continue through the articles still present in the feed. Downloads are
+limited to 4 MiB per feed and article text to 512 KiB. Complete entries from a partial
+download remain usable if the feed reaches the size limit or times out.
 
 ## Focus Timers
 
