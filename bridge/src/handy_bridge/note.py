@@ -6,7 +6,9 @@ import os
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
+
+from handy_bridge.kind import DEFAULT_KIND, NoteKind
 
 _FORBIDDEN = '<>:"\\|?*'
 
@@ -21,10 +23,18 @@ class NoteData:
     date_estimated: bool
     duration_s: float
     asr_model: str
+    # What the recording was for. Always written: it is the axis the Bases views
+    # filter on, so a note without it would be invisible in all three of them.
+    kind: NoteKind = DEFAULT_KIND
     # Present only when the recording was triggered from inside the reader.
     book: str | None = None
     word_offset: int | None = None
     excerpt: str | None = None
+    # Resolved from the excerpt against the converted book, so these travel with
+    # the anchor fields above and are absent for a standalone note.
+    chapter: int | None = None
+    chapter_title: str | None = None
+    chapter_source: str | None = None
     # (question, answer) pairs already resolved for this note. Kept as plain tuples so
     # rendering stays independent of the post-processing package.
     answers: list[tuple[str, str]] = field(default_factory=list)
@@ -74,6 +84,8 @@ def render(note: NoteData) -> str:
     lines = [
         "---",
         f"title: {_quote(note.title)}",
+        # Right after the title so it is the first thing the properties panel shows.
+        f"kind: {note.kind}",
         f"date: {note.recorded_at.isoformat(timespec='seconds')}",
         f"duration: {round(note.duration_s)}s",
         "source: rsvp-nano",
@@ -85,6 +97,14 @@ def render(note: NoteData) -> str:
     # Offset 0 is the first word of the book, so compare against None explicitly.
     if note.word_offset is not None:
         lines.append(f"word_offset: {note.word_offset}")
+    if note.chapter is not None:
+        lines.append(f"chapter: {note.chapter}")
+        if note.chapter_title:
+            lines.append(f"chapter_title: {_quote(note.chapter_title)}")
+        # Records whether the chapter came from a text match or a fallback estimate,
+        # so a badly placed note stays identifiable without re-running anything.
+        if note.chapter_source:
+            lines.append(f"chapter_source: {note.chapter_source}")
     if note.date_estimated:
         lines.append("date_estimated: true")
     lines += ["---", "", note.body.strip(), ""]
@@ -145,37 +165,26 @@ def append_followup(path: Path, question: str, answer: str) -> Path:
     return path
 
 
-# Notes with no book share one folder, named like the Kanban board that collects
-# the same recordings, so the two views of a reading session line up.
-GENERAL_FOLDER = "Geral"
-
-
-def inbox_path_for(inbox: Path, book_stem: str | None) -> Path:
-    """One subfolder per book: reading two at once made a flat Inbox unreadable."""
-    name = (book_stem or "").strip()
-    # The stem comes off the device, so take only the last path component: a name
-    # carrying separators must not be able to write outside the inbox.
-    name = PurePosixPath(name.replace("\\", "/")).name if name else ""
-    if not name or name in {".", ".."}:
-        name = GENERAL_FOLDER
-    return Path(inbox) / name
-
-
-def _unique_path(inbox: Path, stem: str) -> Path:
-    candidate = inbox / f"{stem}.md"
+def _unique_path(folder: Path, stem: str) -> Path:
+    candidate = folder / f"{stem}.md"
     counter = 2
     while candidate.exists():
-        candidate = inbox / f"{stem}-{counter}.md"
+        candidate = folder / f"{stem}-{counter}.md"
         counter += 1
     return candidate
 
 
-def write_note(inbox: Path, note: NoteData) -> Path:
+def write_note(notes_dir: Path, note: NoteData, *, width: int = 2) -> Path:
     """Write the note atomically so OneDrive never syncs a partial file."""
-    inbox = Path(inbox)
-    inbox.mkdir(parents=True, exist_ok=True)
-    stem = f"{note.recorded_at:%Y-%m-%d %H%M} - {slugify(note.title)}"
-    target = _unique_path(inbox, stem)
+    # Imported here because `layout` takes `slugify` from this module. The other way
+    # out would be a third module holding one function, which buys nothing.
+    from handy_bridge.layout import note_stem
+
+    notes_dir = Path(notes_dir)
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    target = _unique_path(
+        notes_dir, note_stem(note.chapter, note.word_offset, note.title, width)
+    )
 
     tmp = target.with_name(target.name + ".partial")
     tmp.write_text(render(note), encoding="utf-8")

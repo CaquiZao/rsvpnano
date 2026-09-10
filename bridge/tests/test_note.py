@@ -6,7 +6,6 @@ from pathlib import Path
 
 from handy_bridge.note import (
     NoteData,
-    inbox_path_for,
     render,
     slugify,
     write_note,
@@ -117,25 +116,72 @@ def test_slugify_replaces_reserved_path_chars_and_keeps_accents():
     assert slugify("   ") == "Sem titulo"
 
 
-def test_write_note_creates_inbox_and_names_file(tmp_path):
-    path = write_note(tmp_path / "Inbox", sample())
+def test_write_note_creates_the_folder_and_names_by_position(tmp_path):
+    path = write_note(tmp_path / "Notas", sample(chapter=1, word_offset=1324))
     assert path.parent.is_dir()
-    assert path.name == "2026-09-07 1432 - Ideia de captura por voz.md"
+    assert path.name == "01-001324 Ideia de captura por voz.md"
     assert "Texto limpo." in path.read_text(encoding="utf-8")
 
 
+def test_write_note_pads_the_chapter_to_the_requested_width(tmp_path):
+    path = write_note(tmp_path / "Notas", sample(chapter=7, word_offset=2), width=3)
+    assert path.name.startswith("007-000002 ")
+
+
 def test_write_note_never_overwrites(tmp_path):
-    inbox = tmp_path / "Inbox"
-    first = write_note(inbox, sample())
-    second = write_note(inbox, sample())
+    notes = tmp_path / "Notas"
+    # Duas gravacoes no mesmo ponto do livro: e o caso real das notas de 14:00 e
+    # 16:10, que compartilham o offset 8120.
+    first = write_note(notes, sample(chapter=3, word_offset=8120))
+    second = write_note(notes, sample(chapter=3, word_offset=8120))
     assert first != second
     assert second.name.endswith("-2.md")
 
 
 def test_write_note_leaves_no_temp_files(tmp_path):
-    inbox = tmp_path / "Inbox"
-    write_note(inbox, sample())
-    assert [p.name for p in inbox.iterdir() if p.suffix != ".md"] == []
+    notes = tmp_path / "Notas"
+    write_note(notes, sample())
+    assert [p.name for p in notes.iterdir() if p.suffix != ".md"] == []
+
+
+# --- kind e capitulo --------------------------------------------------------
+
+
+def test_frontmatter_carries_kind_and_chapter():
+    out = render(
+        sample(
+            kind="recall",
+            book="Sapiens",
+            word_offset=12438,
+            chapter=8,
+            chapter_title="A maior fraude da história",
+            chapter_source="exato",
+        )
+    )
+    assert "kind: recall" in out
+    assert "chapter: 8" in out
+    assert 'chapter_title: "A maior fraude da história"' in out
+    assert "chapter_source: exato" in out
+
+
+def test_kind_is_always_written_even_for_a_standalone_note():
+    # E o eixo que as views de Bases filtram: sem ele a nota fica invisivel nas tres.
+    out = render(sample(book=None, chapter=None))
+    assert "kind: anotação" in out
+
+
+def test_chapter_fields_are_omitted_when_there_is_no_chapter():
+    out = render(sample(book=None, chapter=None))
+    assert "chapter:" not in out
+    assert "chapter_title:" not in out
+    assert "chapter_source:" not in out
+
+
+def test_chapter_zero_is_still_written():
+    # Capitulo 0 nao existe hoje, mas comparar com None e nao com falsy evita que
+    # um indice base-zero futuro desapareca em silencio.
+    out = render(sample(book="S", chapter=0, chapter_title="Capa"))
+    assert "chapter: 0" in out
 
 
 def test_render_includes_answered_questions():
@@ -214,31 +260,3 @@ def test_append_followup_leaves_no_temp_file(tmp_path):
 def test_append_followup_on_a_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         append_followup(tmp_path / "nao-existe.md", "q", "a")
-
-
-# --- uma subpasta por livro -------------------------------------------------
-
-
-def test_notes_from_a_book_go_into_a_folder_named_after_it():
-    # Reading two books at once put every note in one flat Inbox, which is what
-    # prompted this. The folder name matches the Kanban board for the same book.
-    assert inbox_path_for(Path("/vault/Inbox"), "sapiens") == Path("/vault/Inbox/sapiens")
-
-
-def test_a_note_with_no_book_lands_in_the_general_folder():
-    assert inbox_path_for(Path("/vault/Inbox"), None) == Path("/vault/Inbox/Geral")
-
-
-def test_an_empty_book_name_is_treated_as_no_book():
-    assert inbox_path_for(Path("/vault/Inbox"), "") == Path("/vault/Inbox/Geral")
-
-
-def test_a_book_name_with_path_separators_cannot_escape_the_inbox():
-    # The book stem arrives from the device, so it is not trusted to be a bare name.
-    assert inbox_path_for(Path("/vault/Inbox"), "../../etc") == Path("/vault/Inbox/etc")
-
-
-def test_write_note_creates_the_book_folder(tmp_path):
-    target = write_note(inbox_path_for(tmp_path, "sapiens"), sample(book="sapiens"))
-    assert target.parent == tmp_path / "sapiens"
-    assert target.exists()
