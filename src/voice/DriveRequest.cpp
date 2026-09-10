@@ -28,9 +28,39 @@ namespace voice {
             std::string access_token;
         };
 
+        // Percent-encodes everything application/x-www-form-urlencoded doesn't treat
+        // as itself. Client secrets and refresh tokens are base64-derived and can
+        // contain '+' (and '/', '='); a compliant decoder reads an unescaped '+' as a
+        // space, which would silently corrupt the value in transit -- the same
+        // undiagnosable auth failure a missing field produces, just by a different
+        // mechanism.
+        std::string urlEncode(std::string_view value) {
+            static constexpr char kHex[] = "0123456789ABCDEF";
+            std::string out;
+            out.reserve(value.size());
+            for (const char raw : value) {
+                const auto byte = static_cast<unsigned char>(raw);
+                const bool unreserved = (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z')
+                    || (byte >= '0' && byte <= '9') || byte == '-' || byte == '_' || byte == '.' || byte == '~';
+                if (unreserved) {
+                    out += raw;
+                    continue;
+                }
+                out += '%';
+                out += kHex[byte >> 4];
+                out += kHex[byte & 0x0f];
+            }
+            return out;
+        }
+
     } // namespace
 
     bool parseDriveConfig(std::string_view toml, DriveCredentials& out) {
+        // Glaze's TOML reader only writes fields present in the input; it never
+        // clears the destination. Without this reset, a field left over from an
+        // earlier successful parse into the same `out` would survive a later,
+        // incomplete parse and let the emptiness check below pass by accident.
+        out = DriveCredentials{};
         const auto error =
             glz::read<glz::opts{.format = glz::TOML, .error_on_unknown_keys = false}>(out, toml);
         if (error)
@@ -42,19 +72,18 @@ namespace voice {
     }
 
     std::string refreshBody(const DriveCredentials& credentials) {
-        // application/x-www-form-urlencoded. The four values are tokens Google itself
-        // issued (OAuth client ids/secrets, base64url refresh tokens); none of them
-        // can contain a byte urlencoding would need to escape, so this concatenates
-        // rather than escapes.
+        // application/x-www-form-urlencoded. The four values are tokens Google
+        // itself issued, but "Google-issued" doesn't mean "safe unescaped" -- see
+        // urlEncode's comment -- so each is percent-encoded before concatenation.
         std::string out;
         out.reserve(credentials.clientId.size() + credentials.clientSecret.size()
                     + credentials.refreshToken.size() + 64);
         out += "client_id=";
-        out += credentials.clientId;
+        out += urlEncode(credentials.clientId);
         out += "&client_secret=";
-        out += credentials.clientSecret;
+        out += urlEncode(credentials.clientSecret);
         out += "&refresh_token=";
-        out += credentials.refreshToken;
+        out += urlEncode(credentials.refreshToken);
         out += "&grant_type=refresh_token";
         return out;
     }

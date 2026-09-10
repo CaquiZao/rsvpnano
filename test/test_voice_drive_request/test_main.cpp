@@ -39,6 +39,33 @@ namespace {
         TEST_ASSERT_NOT_NULL(strstr(body.c_str(), "client_id=cid"));
     }
 
+    void test_the_refresh_body_percent_encodes_special_characters() {
+        // Base64-derived secrets and refresh tokens can contain '+', '/', and '=';
+        // a compliant x-www-form-urlencoded decoder reads an unescaped '+' as a
+        // space, corrupting the value in transit.
+        voice::DriveCredentials creds{"cid", "c+s/e=c", "rtok", "fid"};
+        const std::string body = voice::refreshBody(creds);
+        TEST_ASSERT_NOT_NULL(strstr(body.c_str(), "client_secret=c%2Bs%2Fe%3Dc"));
+    }
+
+    void test_parsing_an_incomplete_config_does_not_reuse_a_prior_success() {
+        // Glaze's TOML reader only writes fields present in the input; it never
+        // clears the destination. A field left from an earlier successful parse
+        // must not survive into a later, incomplete parse of the same instance.
+        voice::DriveCredentials creds;
+        const std::string complete =
+            "client_id = \"cid\"\n"
+            "client_secret = \"csec\"\n"
+            "refresh_token = \"rtok\"\n"
+            "folder_id = \"fid\"\n";
+        TEST_ASSERT_TRUE(voice::parseDriveConfig(complete, creds));
+        const std::string missingRefreshToken =
+            "client_id = \"cid\"\n"
+            "client_secret = \"csec\"\n"
+            "folder_id = \"fid\"\n";
+        TEST_ASSERT_FALSE(voice::parseDriveConfig(missingRefreshToken, creds));
+    }
+
     void test_the_access_token_is_read_from_the_response() {
         std::string token;
         TEST_ASSERT_TRUE(voice::parseAccessToken(
@@ -77,6 +104,8 @@ int main(int, char**) {
     RUN_TEST(test_a_config_missing_the_refresh_token_is_refused);
     RUN_TEST(test_garbage_config_is_refused);
     RUN_TEST(test_the_refresh_body_asks_for_a_refresh_grant);
+    RUN_TEST(test_the_refresh_body_percent_encodes_special_characters);
+    RUN_TEST(test_parsing_an_incomplete_config_does_not_reuse_a_prior_success);
     RUN_TEST(test_the_access_token_is_read_from_the_response);
     RUN_TEST(test_an_error_response_yields_no_token);
     RUN_TEST(test_the_upload_metadata_names_the_file_and_its_folder);
