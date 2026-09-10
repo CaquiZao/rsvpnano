@@ -14,6 +14,8 @@ import uvicorn
 from handy_bridge.config import ConfigError, load_config
 from handy_bridge.digest import DigestScheduler, DigestState
 from handy_bridge.discovery import AddressWatcher
+from handy_bridge.drive import Drive
+from handy_bridge.drive_poller import DrivePoller, ProcessedIds
 from handy_bridge.postprocess import build as build_processor
 from handy_bridge.server import create_app
 from handy_bridge.listener import TelegramListener
@@ -101,6 +103,19 @@ def main(argv: list[str] | None = None) -> int:
     worker = NoteWorker(cfg, processor, telegram=telegram, threads=threads)
     worker.start()
 
+    drive_poller = None
+    if cfg.drive.enabled:
+        drive_poller = DrivePoller(
+            cfg,
+            Drive(cfg.drive),
+            worker.submit,
+            ProcessedIds(cfg.audio_store / "drive-seen.json"),
+        )
+        drive_poller.start()
+        logging.getLogger(__name__).info(
+            "Drive fallback enabled, polling every %ds", cfg.drive.poll_s
+        )
+
     # Watches the address rather than announcing once: the laptop moves between
     # networks and the old announcement would send the device to the wrong router.
     announcer = AddressWatcher(cfg.port)
@@ -115,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
         if listener is not None:
             listener.stop()
         announcer.stop()
+        if drive_poller is not None:
+            drive_poller.stop()
         worker.stop()
     return 0
 

@@ -3,9 +3,12 @@
 Serviço local que recebe gravações do RSVP Nano, transcreve com o
 [Handy](https://github.com/cjpais/Handy) e escreve notas Markdown no vault do Obsidian.
 
-O áudio nunca sai da sua máquina: a transcrição roda localmente com o modelo Nemotron
-Streaming 3.5. Apenas o texto já transcrito é enviado ao passo de pós-processamento,
-e mesmo esse passo é plugável — veja [Pós-processamento](#pós-processamento).
+A **transcrição** nunca sai da sua máquina: ela roda localmente com o Nemotron, e
+nenhum serviço de nuvem recebe seu áudio para transcrever. Se você habilitar a rota de
+queda do Drive, o WAV das notas que não acharam o bridge na rede transita e repousa na
+**sua** conta Google até o bridge buscá-lo — legível por você e por quem tem acesso a
+essa conta. Apenas o texto já transcrito é enviado ao passo de pós-processamento, e
+mesmo esse passo é plugável — veja [Pós-processamento](#pós-processamento).
 
 ## Como funciona
 
@@ -113,6 +116,35 @@ multipart e não o conteúdo.
 No device, uma nota recusada é **estacionada** em vez de apagada: o `.wav` e o `.json`
 ganham o sufixo `.parked` em `/voice` no cartão, ficam fora da fila e nunca são
 varridos. A tela diz "Bridge recusou a nota" em vez de contar a recusa como entrega.
+
+## Quando o bridge não está na rede
+
+O device tenta a LAN primeiro, sempre: só cai para o Google Drive quando nenhum bridge
+é encontrado por mDNS. É uma rota de emergência, não um caminho alternativo de uso
+normal — enquanto o bridge estiver na mesma rede, o Drive nunca entra em jogo.
+
+Habilitada em `[drive]` no `config.toml` — desligada por padrão, então quem só usa o
+bridge na própria rede não precisa criar projeto nenhum no Google Cloud. Para gerar as
+credenciais, preencha `client_id` e `client_secret` (de um projeto OAuth do Google
+Cloud) e rode:
+
+```bash
+uv run python -m handy_bridge.drive_auth --config config.toml
+```
+
+O comando abre o navegador para a tela de consentimento, troca o código pelo refresh
+token, imprime a linha `refresh_token = "..."` para colar no `[drive]` do
+`config.toml` do bridge, e escreve um `drive.toml` para copiar no device.
+
+O escopo pedido é `drive.file`: o bridge só alcança os arquivos que o próprio app
+criou, nunca o resto do seu Drive. Ele fica com um `DrivePoller` em background, que
+verifica a pasta configurada a cada `poll_s` segundos, baixa o par `.wav`+`.json` que
+achar, entrega para a mesma pipeline da rota HTTP e remove os dois arquivos do Drive.
+
+**A tela de consentimento OAuth do projeto Google Cloud precisa estar em "Published",
+não em "Testing".** Em Testing, o Google expira o refresh token em 7 dias — o bridge
+para de conseguir acesso novo sem aviso, e a rota de queda volta a falhar em
+silêncio até alguém reparar e refazer o consentimento.
 
 ## Testes
 

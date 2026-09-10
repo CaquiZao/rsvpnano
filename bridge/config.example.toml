@@ -41,3 +41,18 @@ chat_id = ""
 enabled = true
 weekday = 6                     # 0 = segunda ... 6 = domingo
 hour    = 19
+
+[drive]
+# Rota de queda: quando o device nao acha o bridge na rede, ele sobe a gravacao
+# para uma pasta do Google Drive em vez de perder a nota. Desligado por padrao
+# -- quem so usa o bridge na propria rede nao precisa criar projeto no Google
+# Cloud para nada. Para habilitar, rode
+# `uv run python -m handy_bridge.drive_auth --config config.toml` depois de
+# preencher client_id/client_secret, e veja "Quando o bridge nao esta na rede"
+# no README.
+enabled         = false
+client_id       = ""
+client_secret   = ""
+refresh_token   = ""
+folder_id       = ""
+poll_s          = 30
