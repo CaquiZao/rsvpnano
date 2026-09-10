@@ -531,7 +531,23 @@ cd bridge && uv run python tools/check_chapters.py \
 ```
 Expected: `exatos: 5/5`, e cada nota com um capítulo plausível.
 
-- [ ] **Step 3: Decide**
+- [x] **Step 3: Decide** — **PORTÃO FECHADO EM 5/5, Fase 2 liberada.**
+
+Resultado da primeira execução: **4/5**. A nota de 2026-09-09 22:05 falhou porque o
+trecho enviado pelo device traz `passaram porum processo` onde o livro diz `por um` —
+palavras soldadas pela conversão HTML-para-texto do device, não erro de ASR. A nota
+resolvia no capítulo certo, mas por estimativa.
+
+Corrigido em `chapters.compact` / `chapters._match`: o casamento tenta primeiro com
+espaços e, sem acerto, tenta sem espaço nenhum, o que torna artefato de junção de
+palavra invisível. Estrito antes de frouxo, para não perder precisão em texto limpo.
+Regressão coberta por `test_a_word_join_artefact_from_the_device_still_matches`, com o
+texto real que falhou. Segunda execução: **5/5**.
+
+**Achado cosmético para o usuário decidir:** a numeração sai do spine do epub, que conta
+capa, folha de rosto e sumário. O capítulo 1 do Sapiens vira `03`. Ordenação e título
+ficam corretos; só o número não corresponde ao do livro. Não renumerado de propósito —
+heurística de front matter erra em silêncio.
 
 - **5/5** → seguir para a Task 4.
 - **Menos que 5/5** → **PARAR.** Registrar no plano qual nota falhou e por quê (trecho ausente, trecho reescrito pelo device, normalização insuficiente). A saída provável é o device passar o capítulo no metadado, que é firmware e está fora deste plano. Não construir resumo sobre capítulo estimado.
