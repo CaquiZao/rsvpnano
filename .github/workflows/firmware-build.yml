@@ -6,6 +6,17 @@ on:
       firmware_tag:
         required: true
         type: string
+  # Disparo manual, porque até aqui a única forma de compilar firmware no CI era
+  # publicar uma release: preview.yml e release.yml chamam este workflow, e os dois
+  # criam release. Quem só quer o .bin de uma mudança — ou confirmar que ela compila
+  # para todas as placas — não deveria ter de publicar nada para consegui-lo.
+  workflow_dispatch:
+    inputs:
+      firmware_tag:
+        description: "Tag aplicada localmente para estampar o build, ex.: manual-build"
+        required: true
+        default: "manual-build"
+        type: string
 
 permissions:
   contents: read
