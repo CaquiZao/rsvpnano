@@ -50,6 +50,7 @@ PRESETS = (
         shaping=True,
     ),
     FontPreset("andika", "Andika", REPO_ROOT / "third_party" / "andika" / "Andika-Regular.ttf"),
+    FontPreset("arimo", "Arimo", REPO_ROOT / "third_party" / "arimo" / "Arimo.ttf"),
     FontPreset(
         "atkinson-hyperlegible",
         "Atkinson Hyperlegible",
@@ -68,6 +69,18 @@ PRESETS = (
         "he",
         shaping=True,
     ),
+    FontPreset(
+        "ibm-plex-mono",
+        "IBM Plex Mono",
+        REPO_ROOT / "third_party" / "ibm-plex-mono" / "IBMPlexMono-Regular.ttf",
+    ),
+    FontPreset("inter", "Inter", REPO_ROOT / "third_party" / "inter" / "Inter.ttf"),
+    FontPreset(
+        "jetbrains-mono",
+        "JetBrains Mono",
+        REPO_ROOT / "third_party" / "jetbrains-mono" / "JetBrainsMono.ttf",
+    ),
+    FontPreset("newsreader", "Newsreader", REPO_ROOT / "third_party" / "newsreader" / "Newsreader.ttf"),
     FontPreset(
         "noto-naskh-arabic",
         "Noto Naskh Arabic",
@@ -107,6 +120,11 @@ PRESETS = (
         "opendyslexic",
         "OpenDyslexic",
         REPO_ROOT / "third_party" / "opendyslexic" / "OpenDyslexic-Regular.ttf",
+    ),
+    FontPreset(
+        "source-serif-4",
+        "Source Serif 4",
+        REPO_ROOT / "third_party" / "source-serif-4" / "SourceSerif4.ttf",
     ),
     FontPreset(
         "stix-two-math",
