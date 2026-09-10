@@ -162,11 +162,16 @@ def index_cache_path(source_dir: Path, book_stem: str) -> Path:
     return Path(source_dir) / f"{book_stem}.chapters.json"
 
 
-def load_index(source_dir: Path, book_stem: str, epub_path: Path) -> BookIndex | None:
+def load_index(
+    source_dir: Path, book_stem: str, epub_path: Path, *, write_cache: bool = True
+) -> BookIndex | None:
     """Build the index once per book and cache it beside the converted text.
 
     Returns None rather than raising: an unreadable book is a missing convenience,
     never a reason to lose a note.
+
+    `write_cache=False` is for callers that must not touch the disk at all, such
+    as the migration's dry run.
     """
     cache = index_cache_path(source_dir, book_stem)
     if cache.is_file():
@@ -185,6 +190,8 @@ def load_index(source_dir: Path, book_stem: str, epub_path: Path) -> BookIndex |
         log.warning("could not index chapters for %r: %s", book_stem, exc)
         return None
 
+    if not write_cache:
+        return index
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
         payload = {"chapters": [c.__dict__ for c in index.chapters]}

@@ -182,6 +182,9 @@ def epub_source(vault_path: Path, book_stem: str) -> Path:
     candidates = [
         source_dir(vault_path, book_stem) / f"{book_stem}.epub",
         Path(vault_path) / f"{book_stem}.epub",
+        # The old vault kept some epubs beside the converted text instead of at
+        # the root, so both legacy spots have to be searched.
+        Path(vault_path) / "Books" / f"{book_stem}.epub",
     ]
     return next((c for c in candidates if c.is_file()), candidates[0])
 
