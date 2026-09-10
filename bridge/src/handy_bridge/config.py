@@ -42,6 +42,19 @@ class DigestConfig:
 
 
 @dataclass(frozen=True)
+class SummariesConfig:
+    enabled: bool = True
+    # "nota" regenerates a chapter summary on every recording in it, which is the
+    # freshest and costs one `claude -p` call per note. "capitulo" waits until the
+    # reading moves past the chapter, which is roughly one call per chapter
+    # instead. The trade is freshness against cost, so it is a config choice.
+    chapter_on: str = "nota"
+
+
+VALID_CHAPTER_TRIGGERS = {"nota", "capitulo"}
+
+
+@dataclass(frozen=True)
 class TelegramConfig:
     enabled: bool = False
     token: str = ""
@@ -62,6 +75,7 @@ class Config:
     kanban: KanbanConfig = KanbanConfig()
     telegram: TelegramConfig = TelegramConfig()
     digest: DigestConfig = DigestConfig()
+    summaries: SummariesConfig = SummariesConfig()
 
 
 
@@ -109,6 +123,14 @@ def load_config(path: Path) -> Config:
     if telegram.enabled and not telegram.chat_id:
         raise ConfigError("[telegram] enabled but chat_id is empty")
 
+    summaries_raw = raw.get("summaries", {})
+    chapter_on = str(summaries_raw.get("chapter_on", "nota")).strip().lower()
+    if chapter_on not in VALID_CHAPTER_TRIGGERS:
+        raise ConfigError(
+            f"[summaries] chapter_on must be one of {sorted(VALID_CHAPTER_TRIGGERS)}, "
+            f"got {chapter_on!r}"
+        )
+
     digest_raw = raw.get("digest", {})
     weekday = int(digest_raw.get("weekday", 6))
     hour = int(digest_raw.get("hour", 19))
@@ -142,5 +164,9 @@ def load_config(path: Path) -> Config:
             enabled=bool(digest_raw.get("enabled", True)),
             weekday=weekday,
             hour=hour,
+        ),
+        summaries=SummariesConfig(
+            enabled=bool(summaries_raw.get("enabled", True)),
+            chapter_on=chapter_on,
         ),
     )

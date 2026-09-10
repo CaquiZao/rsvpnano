@@ -14,9 +14,11 @@ device → POST /v1/notes → WAV salvo em disco → 200 imediato
                               ↓ (fila em background, uma nota por vez)
                           handy --transcribe-file
                               ↓
-                          título, tags e limpeza
+                          título, tags, tipo e limpeza
                               ↓
-                          Reading/Inbox/*.md
+                          Livros/<livro>/Notas/*.md
+                              ↓
+                          resumo do capítulo e do livro
 ```
 
 O `200` sai **antes** da transcrição, de propósito: o device não deve manter a rádio
@@ -98,24 +100,78 @@ backend ser plugável.
 Uma falha no pós-processamento **nunca** custa uma nota: se o `claude` falhar, a nota é
 escrita com a transcrição crua e título por timestamp.
 
+## Como o vault é organizado
+
+```
+Reading/
+├── Anotações.base                ← porta de entrada por tipo de nota
+├── Perguntas.base
+├── Recall.base
+├── Livros/
+│   └── Sapiens/
+│       ├── Sapiens.md            ← resumo do livro     (derivado)
+│       ├── Capítulos/
+│       │   └── 04 - Os Navegadores.md   (derivado)
+│       ├── Notas/
+│       │   └── 04-012438 Crítica à tese sobre agricultura.md
+│       ├── Quadro.md             ← pendências
+│       └── fonte/                ← epub, markdown convertido, índice
+└── Geral/                        ← notas gravadas fora da leitura
+```
+
+Três eixos, três mecanismos, sem duplicar dado: **pastas** carregam a posição de
+leitura, as **views de Bases** carregam o tipo, o **quadro do Kanban** carrega o
+status. Pasta só corta de um jeito, e uma view lê o frontmatter das notas — então
+não existe índice para ficar dessincronizado.
+
+O nome do arquivo é **capítulo e offset, não data**. Reler o capítulo 2 depois do 8
+devolve a nota ao lugar dela no livro; a data segue no frontmatter, onde as views
+ordenam por ela. O capítulo sai da busca do trecho no texto convertido, nunca de
+aritmética de offset — o device conta palavras com o tokenizador dele e o bridge com
+o próprio, e os dois nunca vão bater.
+
+`Notas/` é **fonte**: escrita uma vez, nunca reescrita. Os resumos são **derivados**,
+reconstruíveis a partir das notas. Isso não é organização, é segurança: uma cópia de
+conflito do OneDrive num derivado não custa nada, porque basta gerar de novo.
+
+Migrar um vault do layout antigo:
+
+```bash
+uv run python -m handy_bridge.migrate --vault "<caminho>"   # dry-run
+uv run python -m handy_bridge.migrate --vault "<caminho>" --apply
+```
+
 ## Formato da nota
 
 ```markdown
 ---
 title: "Discordo da tese sobre agricultura"
+kind: recall
 date: 2026-09-08T11:57:00
 duration: 21s
 source: rsvp-nano
 asr_model: .../nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf
+tags: [leitura, agricultura]
 book: "[[epdf.pub_sapiens-uma-breve-historia-da-humanidade]]"
 word_offset: 12438
-tags: [leitura, agricultura]
+chapter: 8
+chapter_title: "A maior fraude da história"
+chapter_source: exato
 ---
 
 Texto limpo pelo LLM.
 
 > [!quote] Trecho que eu estava lendo
 > ...a Revolução Agrícola foi a maior fraude da história...
+
+> [!success] Conferência do que você lembrou
+>
+> ✓ **Você disse:** A agricultura piorou a vida do indivíduo
+>
+> ✗ **Você disse:** A população caiu depois da agricultura
+> **Na verdade:** A população cresceu; a qualidade de vida individual caiu
+>
+> *Conferência automática, não verificada.*
 
 > [!note]- Transcrição original
 > transcrição literal do Nemotron, palavra por palavra
@@ -125,11 +181,74 @@ A **transcrição crua fica sempre preservada** no callout recolhido. O LLM gera
 tags e a versão limpa, mas nunca substitui o que você falou — se ele alucinar, o
 original está a um clique.
 
-Os campos `book`, `word_offset` e o callout de trecho só aparecem quando a gravação
-nasceu dentro do leitor. Uma nota solta omite os três.
+Os campos de âncora (`book`, `word_offset`, `chapter*`) e o callout de trecho só
+aparecem quando a gravação nasceu dentro do leitor. `kind` aparece sempre: é o eixo
+que as views filtram, e uma nota sem ele ficaria invisível nas três.
+
+`chapter_source` diz **como** o capítulo foi descoberto — `exato` quando o trecho
+casou no texto do livro, `estimado` quando caiu na estimativa por offset. O campo
+existe para que uma nota mal posicionada continue identificável depois.
 
 Escrita é **atômica** (arquivo temporário + rename) porque o vault vive dentro do
 OneDrive e escrita parcial pode virar cópia de conflito.
+
+## Tipo da nota
+
+`kind` é `anotação`, `pergunta` ou `recall`, decidido em duas camadas:
+
+1. **O LLM infere**, num campo da chamada de pós-processamento que já existe — custo
+   marginal zero.
+2. **A palavra falada vence.** Dizer `recall`, `recal`, `ricol` ou `recapitulando`
+   força `kind: recall`, independente do que o modelo achou.
+
+As três primeiras variantes existem porque o Nemotron transcreve português e "recall"
+é palavra inglesa no meio da fala: o casamento é texto puro, então aceitar variação
+fonética custa zero e evita que o override falhe por sotaque. `recapitulando` é a
+alternativa que não depende disso.
+
+## Conferência do recall
+
+Quando a nota é um recall, o bridge compara o que você falou com **o trecho que você
+leu desde o último recall**, limitado ao capítulo atual nos dois extremos. O limite é
+o que impede uma sessão longa de leitura sem gravação de transformar a comparação em
+meio livro.
+
+Os erros aparecem **lado a lado no corpo** da nota, não escondidos: se o vault é
+material de auto-teste, o que te derrubou é a parte que vale reencontrar depois.
+
+Toda conferência vai com aviso de não verificada, pela mesma razão das respostas
+automáticas.
+
+## Resumos de capítulo e de livro
+
+Dois arquivos derivados por livro, alimentados **só pelo que você registrou** — o
+texto limpo das notas, os pares pergunta/resposta e as correções de recall. O texto
+do livro nunca entra num resumo. Isso tem uma consequência que vale saber: o resumo
+espelha o que você engajou, não o que o livro diz, e capítulo lido sem gravação não
+gera resumo nenhum. A lacuna é informação, e o resumo do livro lista os capítulos sem
+registro.
+
+O **resumo do capítulo** tem uma seção `## Minhas observações` que o bridge lê,
+preserva e reescreve intacta. É onde você pode anotar à mão dentro de um arquivo
+gerado sem perder na próxima gravação. Tudo fora dela é sobrescrito.
+
+O **resumo do livro** é reconstruído a partir das seções `## Síntese` dos capítulos,
+não das notas cruas. Duas razões: cada síntese tem teto de 400 palavras, então a
+entrada cresce com o número de capítulos e não com o volume de gravação; e
+reconstruir sobre o conjunto é o que permite **rebalancear** os pontos importantes —
+se o capítulo 9 mostra que o que parecia central no 2 era secundário, um resumo
+reconstruído corrige a hierarquia, um que só acumula não.
+
+**Limitação conhecida.** O bridge só descobre onde você está quando uma nota chega,
+então o resumo do livro é reconstruído na primeira nota do capítulo seguinte, não
+quando você de fato termina o capítulo. Terminar o capítulo 4 e só gravar no 7 faz o
+resumo pular direto.
+
+**Custo.** Com `chapter_on = "nota"` o resumo do capítulo é regenerado a cada
+gravação, o que custa uma chamada de `claude -p` por nota — cerca de $0,06 com Haiku,
+pelas mesmas razões de system prompt descritas acima. Com `chapter_on = "capitulo"`
+cai para aproximadamente uma chamada por capítulo, ao custo de o resumo ficar
+desatualizado enquanto você ainda está dentro dele.
 
 ## Pendências viram cartões no Kanban
 
@@ -146,10 +265,10 @@ A extração é **deliberadamente conservadora**: em dúvida entre pendência e 
 o modelo omite. Um quadro com pendências inventadas é pior que um quadro incompleto,
 porque você para de confiar nele.
 
-Um quadro por livro em `Quadros/<livro>.md`; notas gravadas fora da leitura vão para
-`Quadros/Geral.md`. Cada cartão linka de volta para a nota, então o contexto não se
-perde. O formato do arquivo foi extraído do código do plugin obsidian-kanban 2.0.51, e
-a inserção é por linha — o bloco `%% kanban:settings` nunca é tocado.
+Um quadro por livro em `Livros/<livro>/Quadro.md`; notas gravadas fora da leitura vão
+para `Geral/Quadro.md`. Cada cartão linka de volta para a nota, então o contexto não
+se perde. O formato do arquivo foi extraído do código do plugin obsidian-kanban
+2.0.51, e a inserção é por linha — o bloco `%% kanban:settings` nunca é tocado.
 
 ## Respostas automáticas no Telegram
 
@@ -186,10 +305,17 @@ vale mais que lembrete nenhum.
 
 ## Livro como contexto
 
-Quando uma nota chega com `book`, o bridge converte o `.epub` correspondente do vault
-para markdown em `Books/`, uma vez por livro. Isso dá ao
+Quando uma nota chega com `book`, o bridge converte o `.epub` correspondente para
+markdown em `Livros/<livro>/fonte/`, uma vez por livro, e indexa os capítulos ao lado
+num `.chapters.json`. O markdown dá ao
 [Claudian](https://github.com/YishenTu/claudian) o livro inteiro como texto
-pesquisável, para perguntas que o trecho embutido na nota não alcança.
+pesquisável, para perguntas que o trecho embutido na nota não alcança; o índice é o
+que resolve o capítulo de cada nota e recorta a passagem da conferência de recall.
+
+Um detalhe do índice que vale saber: os capítulos vêm do spine do epub, que conta capa,
+folha de rosto e sumário. Então o capítulo 1 de um livro pode aparecer numerado como
+`03`. A ordenação e o título ficam corretos; só o número não corresponde ao do livro
+impresso. Renumerar por heurística de front matter erraria em silêncio, o que é pior.
 
 ## Desempenho medido
 

@@ -75,6 +75,32 @@ RECALL_PROMPT = (
     "conferência.\n"
 )
 
+CHAPTER_SUMMARY_PROMPT = (
+    "Abaixo está tudo o que uma pessoa registrou por voz enquanto lia um capítulo: "
+    "anotações, perguntas com as respostas que recebeu, e conferências do que ela "
+    "lembrou. Escreva uma síntese do capítulo.\n"
+    "Responda APENAS com um objeto JSON válido, sem cercas de código, no formato "
+    '{"synthesis": string}.\n'
+    "A síntese deve ter NO MÁXIMO 350 palavras, ser organizada e fácil de absorver, "
+    "e usar SOMENTE o que está nos registros abaixo. Não acrescente conhecimento seu "
+    "sobre o livro nem preencha lacunas: o valor da síntese é ser o espelho do que a "
+    "pessoa de fato entendeu, com as lacunas que isso tiver.\n"
+    "Quando uma conferência mostrar que a pessoa entendeu algo errado, registre as "
+    "duas versões — o que ela disse e o que o livro afirma — em vez de só a correta.\n"
+)
+
+BOOK_SUMMARY_PROMPT = (
+    "Abaixo estão as sínteses dos capítulos de um livro, escritas a partir do que "
+    "uma pessoa registrou enquanto lia. Extraia os pontos mais importantes do livro "
+    "como um todo.\n"
+    "Responda APENAS com um objeto JSON válido, sem cercas de código, no formato "
+    '{"bullets": array de strings}.\n'
+    "De 5 a 10 itens, cada um em uma frase, ordenados do mais para o menos "
+    "importante. Julgue a importância olhando o conjunto: se um capítulo posterior "
+    "mostra que algo que parecia central era secundário, rebaixe. "
+    "Use SOMENTE o que está nas sínteses.\n"
+)
+
 FOLLOWUP_PROMPT = (
     "Você está esclarecendo uma dúvida de alguém que está lendo um livro e que "
     "achou a resposta anterior insuficiente. "
@@ -287,6 +313,28 @@ class ClaudeCliProcessor:
             if str(item).strip()
         ]
         return RecallCheck(points=points, missed=missed[:3])
+
+    def summarize_chapter(self, entries: list[str]) -> str:
+        """Write the chapter synthesis from the recorded lines, in one call."""
+        if not entries:
+            return ""
+        payload = self._run(
+            CHAPTER_SUMMARY_PROMPT + "\nRegistros:\n" + "\n".join(f"- {e}" for e in entries)
+        )
+        return str(payload.get("synthesis", "")).strip()
+
+    def summarize_book(self, syntheses: list[str]) -> list[str]:
+        """Rank the book's most important points from the chapter syntheses."""
+        if not syntheses:
+            return []
+        payload = self._run(
+            BOOK_SUMMARY_PROMPT + "\nSínteses:\n" + "\n\n".join(syntheses)
+        )
+        return [
+            str(item).strip()
+            for item in (payload.get("bullets") or [])
+            if str(item).strip()
+        ]
 
     def answer_followup(
         self, question: str, history: list[tuple[str, str]], excerpt: str | None

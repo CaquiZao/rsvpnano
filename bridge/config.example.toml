@@ -1,5 +1,4 @@
 vault_path   = "C:/Users/kakam/OneDrive/Área de Trabalho/Reading"
-inbox_folder = "Inbox"
 audio_store  = "C:/Users/kakam/.handy-bridge/audio"
 port         = 8787
 
@@ -18,7 +17,15 @@ answer_tasks = true
 
 [kanban]
 enabled   = true
-subfolder = "Quadros"           # um quadro por livro, mais Geral.md para notas soltas
+
+[summaries]
+# Resumo por capitulo e resumo do livro, alimentados so pelo que voce registrou.
+enabled    = true
+# "nota"     -> regenera o resumo do capitulo a cada gravacao nele. Mais fresco,
+#               custa uma chamada de `claude -p` por nota.
+# "capitulo" -> espera a leitura passar do capitulo. Cerca de uma chamada por
+#               capitulo em vez de uma por nota.
+chapter_on = "nota"
 
 [telegram]
 # Crie um bot com o @BotFather (/newbot) e cole o token aqui.

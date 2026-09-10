@@ -9,13 +9,19 @@ from pathlib import Path
 from typing import Callable
 
 from handy_bridge import chapters as chapters_mod
-from handy_bridge import kanban, layout
+from handy_bridge import kanban, layout, summaries
 from handy_bridge import wav as wav_mod
 from handy_bridge.config import AsrConfig, Config
 from handy_bridge.epub import EpubError, ensure_book_markdown, epub_source
 from handy_bridge.kind import resolve_kind
 from handy_bridge.note import NoteData, write_note
-from handy_bridge.postprocess import Answer, PostProcessError, PostProcessor, Task
+from handy_bridge.postprocess import (
+    Answer,
+    PostProcessError,
+    PostProcessor,
+    RecallCheck,
+    Task,
+)
 from handy_bridge.telegram import build_message
 from handy_bridge.transcriber import Transcription
 from handy_bridge.transcriber import transcribe as default_transcribe
@@ -115,6 +121,7 @@ def process_note(
     word_offset = int(raw_offset) if raw_offset is not None else None
 
     chapter = None
+    index = None
     width = layout.MIN_CHAPTER_DIGITS
     if book:
         try:
@@ -132,6 +139,20 @@ def process_note(
         if index is not None:
             width = index.width
             chapter = chapters_mod.resolve(index, excerpt, word_offset)
+
+    recall = RecallCheck()
+    if note_kind == "recall" and processor is not None and index and chapter:
+        try:
+            passage = chapters_mod.passage(
+                index,
+                chapter.chapter,
+                _last_recall_offset(cfg, book, chapter.chapter),
+                word_offset,
+            )
+            recall = processor.check_recall(body, passage)
+        except PostProcessError as exc:
+            # The check is a convenience; the note and its cards still go out.
+            log.warning("recall check failed for %s: %s", incoming.note_id, exc)
 
     note_path = write_note(
         layout.notes_dir(cfg.vault_path, book),
@@ -153,11 +174,20 @@ def process_note(
             chapter_title=chapter.title if chapter else None,
             chapter_source=chapter.source if chapter else None,
             answers=[(a.question, a.answer) for a in answers],
+            recall_points=[(p.said, p.actual, p.correct) for p in recall.points],
+            recall_missed=list(recall.missed),
         ),
         width=width,
     )
 
     # Everything below is best-effort: the note is already safe on disk.
+    if cfg.summaries.enabled and book and chapter and processor is not None:
+        try:
+            _refresh_summaries(cfg, book, chapter.chapter, index, processor)
+        except (PostProcessError, OSError) as exc:
+            # An old summary beats a lost note, so this never propagates.
+            log.warning("could not refresh summaries for %s: %s", book, exc)
+
     if cfg.kanban.enabled and tasks:
         try:
             _update_board(cfg, book, note_path.stem, tasks, answers)
@@ -205,3 +235,106 @@ def _update_board(
     kanban.ensure_board(board)
     for lane, cards in by_lane.items():
         kanban.add_cards(board, lane, cards)
+
+
+def _offset_from_stem(stem: str) -> int | None:
+    """Read the reading position back out of a note's filename.
+
+    The name is `<chapter>-<offset> <title>`, so the offset is already there and
+    reading the file to find it would be wasted work.
+    """
+    head = stem.split(" ", 1)[0]
+    _, _, offset = head.partition("-")
+    return int(offset) if offset.isdigit() else None
+
+
+def _last_recall_offset(cfg: Config, book: str, chapter: int) -> int | None:
+    """Where the previous recall in this chapter left off.
+
+    None means "no earlier recall", which makes the passage window the whole
+    chapter — the right default for the first recall of a reading run.
+    """
+    notes = summaries.collect_chapter_notes(
+        layout.notes_dir(cfg.vault_path, book), chapter
+    )
+    offsets = [
+        offset
+        for note in notes
+        if note.kind == "recall"
+        for offset in [_offset_from_stem(note.stem)]
+        if offset is not None
+    ]
+    return max(offsets) if offsets else None
+
+
+def _refresh_summaries(
+    cfg: Config,
+    book: str,
+    chapter: int,
+    index: "chapters_mod.BookIndex | None",
+    processor: PostProcessor,
+) -> None:
+    """Rebuild the chapter summary, and the book's when a chapter is left behind."""
+    chapters_dir = layout.chapters_dir(cfg.vault_path, book)
+    width = index.width if index else layout.MIN_CHAPTER_DIGITS
+    title = ""
+    if index is not None:
+        found = index.get(chapter)
+        title = found.title if found else ""
+    title = title or f"Capítulo {chapter}"
+
+    already = {number for number, _, _ in summaries.collect_syntheses(chapters_dir)}
+    advanced = bool(already) and chapter > max(already)
+
+    # With chapter_on="capitulo" the current chapter's summary waits until the
+    # reading moves past it, trading freshness for roughly one call per chapter
+    # instead of one per note.
+    if cfg.summaries.chapter_on == "nota" or advanced:
+        _write_chapter_summary(cfg, book, chapter, title, width, processor)
+
+    if not advanced:
+        return
+
+    # The book summary is rebuilt from the syntheses, never from the raw notes:
+    # that is what keeps its input proportional to the chapter count and what
+    # lets the important points be re-ranked as the reading goes on.
+    syntheses = summaries.collect_syntheses(chapters_dir)
+    bullets = processor.summarize_book([text for _, _, text in syntheses])
+    unrecorded = summaries.unrecorded_chapters(index, chapters_dir) if index else []
+    target = layout.book_summary_path(cfg.vault_path, book)
+    summaries.write_chapter_summary(
+        target,
+        summaries.render_book(
+            title=book, bullets=bullets, syntheses=syntheses, unrecorded=unrecorded
+        ),
+    )
+
+
+def _write_chapter_summary(
+    cfg: Config,
+    book: str,
+    chapter: int,
+    title: str,
+    width: int,
+    processor: PostProcessor,
+) -> None:
+    notes = summaries.collect_chapter_notes(
+        layout.notes_dir(cfg.vault_path, book), chapter
+    )
+    if not notes:
+        return
+    target = layout.chapter_summary_path(cfg.vault_path, book, chapter, title, width)
+    # Read the reserved section back before overwriting, so a hand-written note
+    # inside a generated file survives.
+    observations = summaries.read_observations(target)
+    synthesis = processor.summarize_chapter(summaries.synthesis_input(notes))
+    summaries.write_chapter_summary(
+        target,
+        summaries.render_chapter(
+            chapter=chapter,
+            title=title,
+            synthesis=synthesis,
+            sections=summaries.sections_from(notes),
+            observations=observations,
+        ),
+    )
