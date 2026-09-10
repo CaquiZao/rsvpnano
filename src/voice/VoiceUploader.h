@@ -15,9 +15,14 @@ namespace voice {
         uint16_t port = 0;
     };
 
-    // Reads /config/bridge.txt: "host" or "host:port". Takes precedence over
-    // discovery, because an address the user wrote down is not a guess.
+    // Reads /config/bridge.txt: "host" or "host:port". Tried before discovery, but
+    // only kept if it answers: an address written down on one network is wrong on the
+    // next one, and a device carried between homes must not be stranded by it.
     std::optional<Endpoint> configuredBridge(fs::FS& fs);
+
+    // Opens a socket and closes it. Cheap enough to run before every flush, and the
+    // only way to tell a stale configured address from a live one.
+    bool bridgeReachable(const Endpoint& endpoint, uint32_t timeoutMs = 1500);
 
     // Looks for _handybridge._tcp on the local network. Needs Wi-Fi associated. The
     // service announces itself so there is no address to configure anywhere.

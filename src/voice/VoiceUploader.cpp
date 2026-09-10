@@ -105,6 +105,15 @@ namespace voice {
         return endpoint;
     }
 
+    bool bridgeReachable(const Endpoint& endpoint, uint32_t timeoutMs) {
+        WiFiClient probe;
+        if (!probe.connect(endpoint.host.c_str(), endpoint.port, timeoutMs)) {
+            return false;
+        }
+        probe.stop();
+        return true;
+    }
+
     std::optional<Endpoint> discoverBridge(uint32_t timeoutMs) {
         if (WiFi.status() != WL_CONNECTED) {
             ESP_LOGW(kTag, "discovery skipped: no Wi-Fi");

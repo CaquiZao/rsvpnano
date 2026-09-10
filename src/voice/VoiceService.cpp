@@ -156,8 +156,15 @@ namespace voice {
         // recorded before the first sync still gets a real timestamp on the next one.
         beginTimeSync();
 
-        // The written address wins: discovery is a convenience, not a source of truth.
+        // The written address is a hint, not a rule. It is right at home and wrong
+        // everywhere else, so it is only used if something actually answers there;
+        // otherwise the device finds the bridge on whatever network it is on now.
         auto endpoint = configuredBridge(fs);
+        if (endpoint && !bridgeReachable(*endpoint)) {
+            ESP_LOGI(kTag, "configured bridge at %s:%u did not answer; discovering",
+                     endpoint->host.c_str(), static_cast<unsigned>(endpoint->port));
+            endpoint.reset();
+        }
         if (!endpoint) {
             endpoint = discoverBridge();
         }

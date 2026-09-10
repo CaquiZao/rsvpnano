@@ -11,7 +11,7 @@ import uvicorn
 
 from handy_bridge.config import ConfigError, load_config
 from handy_bridge.digest import DigestScheduler, DigestState
-from handy_bridge.discovery import advertise
+from handy_bridge.discovery import AddressWatcher
 from handy_bridge.postprocess import build as build_processor
 from handy_bridge.server import create_app
 from handy_bridge.listener import TelegramListener
@@ -59,13 +59,10 @@ def main(argv: list[str] | None = None) -> int:
     worker = NoteWorker(cfg, processor, telegram=telegram, threads=threads)
     worker.start()
 
-    zc = None
-    try:
-        zc, _ = advertise(cfg.port)
-    except OSError:
-        logging.getLogger(__name__).warning(
-            "mDNS advertisement failed; the device will need a configured address"
-        )
+    # Watches the address rather than announcing once: the laptop moves between
+    # networks and the old announcement would send the device to the wrong router.
+    announcer = AddressWatcher(cfg.port)
+    announcer.start()
 
     app = create_app(cfg, submit=worker.submit)
     try:
@@ -75,8 +72,7 @@ def main(argv: list[str] | None = None) -> int:
             digest.stop()
         if listener is not None:
             listener.stop()
-        if zc is not None:
-            zc.close()
+        announcer.stop()
         worker.stop()
     return 0
 
