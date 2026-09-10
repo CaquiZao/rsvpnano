@@ -45,8 +45,8 @@ namespace voice {
     std::string uploadFooter(std::string_view boundary);
 
     // Fixed rather than random, same reasoning as VoiceUploadBody's kBoundary: this
-    // string can never legitimately appear inside our own JSON metadata or a WAV
-    // payload, so a constant costs nothing and keeps a failing upload reproducible.
+    // runs to one known API over TLS, and a constant makes a failing upload
+    // reproducible instead of depending on whatever boundary happened to be rolled.
     constexpr char kUploadBoundary[] = "rsvpnanoDriveUploadBoundary";
 
 } // namespace voice
