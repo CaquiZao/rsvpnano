@@ -23,6 +23,11 @@ namespace voice::queue {
     // Delivered: both files go.
     bool markSent(fs::FS& fs, const QueueEntry& entry);
 
+    // Refused by the bridge. Both files are renamed out of the queue rather than
+    // deleted: a 4xx says the bridge could not use this note, not that the recording
+    // was worthless, and the two are indistinguishable from here.
+    bool markRejected(fs::FS& fs, const QueueEntry& entry);
+
     // Failed again. Past kMaxUploadAttempts the recording is renamed out of the queue
     // rather than deleted, so one bad file cannot block every note behind it.
     bool markFailed(fs::FS& fs, const QueueEntry& entry, uint8_t attempts);

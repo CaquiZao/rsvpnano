@@ -57,6 +57,26 @@ namespace {
         TEST_ASSERT_EQUAL(0, plan.sweep.size());
     }
 
+    // --- o que uma tentativa significa para a fila -------------------------
+
+    void test_a_delivered_recording_leaves_the_queue() {
+        TEST_ASSERT_EQUAL(static_cast<int>(voice::QueueAction::Delete),
+                          static_cast<int>(voice::actionFor(voice::UploadResult::Sent)));
+    }
+
+    void test_a_network_failure_keeps_the_recording_queued() {
+        TEST_ASSERT_EQUAL(static_cast<int>(voice::QueueAction::Keep),
+                          static_cast<int>(voice::actionFor(voice::UploadResult::Retry)));
+    }
+
+    void test_a_refused_recording_is_parked_rather_than_deleted() {
+        // A 4xx is the bridge's reading of the audio, and a bug in the bridge produces
+        // one just as easily as a real fault does. The recording cannot be rebuilt, so
+        // it outlives the refusal and the queue moves on without it.
+        TEST_ASSERT_EQUAL(static_cast<int>(voice::QueueAction::Park),
+                          static_cast<int>(voice::actionFor(voice::UploadResult::Rejected)));
+    }
+
     // --- o que é lixo ------------------------------------------------------
 
     void test_a_sidecar_without_its_recording_is_swept() {
@@ -113,6 +133,9 @@ int main(int, char**) {
     RUN_TEST(test_the_queue_is_ordered_oldest_first);
     RUN_TEST(test_a_recording_without_a_sidecar_is_still_pending);
     RUN_TEST(test_a_parked_recording_is_neither_pending_nor_swept);
+    RUN_TEST(test_a_delivered_recording_leaves_the_queue);
+    RUN_TEST(test_a_network_failure_keeps_the_recording_queued);
+    RUN_TEST(test_a_refused_recording_is_parked_rather_than_deleted);
     RUN_TEST(test_a_sidecar_without_its_recording_is_swept);
     RUN_TEST(test_a_leftover_temporary_is_swept);
     RUN_TEST(test_an_unrelated_file_is_left_alone);

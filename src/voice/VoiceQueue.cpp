@@ -94,6 +94,24 @@ namespace voice::queue {
         return fs.remove(entry.wavPath.c_str());
     }
 
+    bool markRejected(fs::FS& fs, const QueueEntry& entry) {
+        // The audio goes first here, the opposite of markSent(): what must not be lost
+        // is the recording, and parking it first means a failed second rename costs the
+        // sidecar rather than the note. Both parked names end in .parked, which
+        // planFrom() skips outright, so neither returns as pending nor gets swept.
+        if (!fs.rename(entry.wavPath.c_str(), parkedName(entry.wavPath).c_str())) {
+            ESP_LOGW(kTag, "could not park refused %s", entry.wavPath.c_str());
+            return false;
+        }
+        if (!entry.metaPath.empty()) {
+            // Kept, not dropped: when the bridge refuses a note over its sidecar, the
+            // sidecar is the only description of what it refused.
+            fs.rename(entry.metaPath.c_str(), parkedName(entry.metaPath).c_str());
+        }
+        ESP_LOGW(kTag, "bridge refused %s; parked rather than deleted", entry.wavPath.c_str());
+        return true;
+    }
+
     bool markFailed(fs::FS& fs, const QueueEntry& entry, uint8_t attempts) {
         if (attempts < kMaxUploadAttempts) {
             return true; // Stays in the queue for the next flush.

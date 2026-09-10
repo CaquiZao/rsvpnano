@@ -176,28 +176,41 @@ namespace voice {
         }
 
         size_t sent = 0;
+        size_t refused = 0;
         for (const auto& entry : items) {
-            const auto result = upload(fs, *endpoint, entry);
-            if (result == UploadResult::Retry) {
+            switch (actionFor(upload(fs, *endpoint, entry))) {
+            case QueueAction::Keep:
                 // Stop at the first network failure rather than hammering the rest: the
                 // problem is the link, not this note.
                 lastError_ = "Envio falhou";
                 break;
+            case QueueAction::Park:
+                // Out of the queue so it cannot loop, but still on the card. Asking
+                // again would be pointless; deleting it would be unrecoverable.
+                queue::markRejected(fs, entry);
+                ++refused;
+                continue;
+            case QueueAction::Delete:
+                queue::markSent(fs, entry);
+                ++sent;
+                continue;
             }
-            // Sent and Rejected both leave the queue. Re-sending what the bridge
-            // refused would loop forever.
-            queue::markSent(fs, entry);
-            ++sent;
+            break;
         }
 
         net::disconnect();
         pendingCount_ = queue::pendingCount(fs);
         busy_ = false;
-        if (sent == items.size()) {
+        if (refused > 0) {
+            // A refusal used to be counted as a delivery, which cleared this and left
+            // the reader told that a note the vault never received was on its way.
+            lastError_ = "Bridge recusou a nota";
+        } else if (sent == items.size()) {
             lastError_ = nullptr;
         }
-        ESP_LOGI(kTag, "flush sent %u of %u, %u still queued", static_cast<unsigned>(sent),
-                 static_cast<unsigned>(items.size()), static_cast<unsigned>(pendingCount_));
+        ESP_LOGI(kTag, "flush sent %u of %u, %u refused, %u still queued", static_cast<unsigned>(sent),
+                 static_cast<unsigned>(items.size()), static_cast<unsigned>(refused),
+                 static_cast<unsigned>(pendingCount_));
     }
 
 } // namespace voice

@@ -36,6 +36,18 @@ namespace voice {
 
     } // namespace
 
+    QueueAction actionFor(UploadResult result) {
+        switch (result) {
+        case UploadResult::Retry:
+            return QueueAction::Keep;
+        case UploadResult::Rejected:
+            return QueueAction::Park;
+        case UploadResult::Sent:
+            break;
+        }
+        return QueueAction::Delete;
+    }
+
     bool isRecordingName(std::string_view name) {
         const std::string lower = lowered(name);
         // A bare ".wav" has no stem to pair a sidecar with, so it is not a recording.
