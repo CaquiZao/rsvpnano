@@ -33,6 +33,25 @@ class Answer:
 
 
 @dataclass(frozen=True)
+class RecallPoint:
+    """One claim the speaker made, and what the book actually says."""
+
+    said: str
+    actual: str
+    correct: bool
+
+
+@dataclass(frozen=True)
+class RecallCheck:
+    points: list[RecallPoint] = field(default_factory=list)
+    # Things in the passage the speaker did not mention at all.
+    missed: list[str] = field(default_factory=list)
+
+    def __bool__(self) -> bool:
+        return bool(self.points or self.missed)
+
+
+@dataclass(frozen=True)
 class PostProcessResult:
     title: str
     tags: list[str]
@@ -46,6 +65,8 @@ class PostProcessor(Protocol):
     def process(self, transcript: str) -> PostProcessResult: ...
 
     def answer_tasks(self, questions: list[str], excerpt: str | None) -> list[Answer]: ...
+
+    def check_recall(self, spoken: str, passage: str) -> RecallCheck: ...
 
     def answer_followup(
         self, question: str, history: list[tuple[str, str]], excerpt: str | None

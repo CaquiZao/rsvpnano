@@ -7,7 +7,14 @@ import subprocess
 from typing import Callable
 
 from handy_bridge.kind import resolve_kind
-from handy_bridge.postprocess import Answer, PostProcessError, PostProcessResult, Task
+from handy_bridge.postprocess import (
+    Answer,
+    PostProcessError,
+    PostProcessResult,
+    RecallCheck,
+    RecallPoint,
+    Task,
+)
 
 MARKER_WORDS = ("pendência", "pendencia", "tarefa", "anotar")
 
@@ -47,6 +54,25 @@ ANSWER_PROMPT = (
     "Cada resposta deve ter NO MÁXIMO 120 palavras, ser direta e concreta. "
     "Não comece com introduções como 'Ótima pergunta'. Não repita a pergunta na resposta. "
     "Se não souber com segurança, diga isso em uma frase em vez de especular.\n"
+)
+
+RECALL_PROMPT = (
+    "Alguém está lendo um livro e acabou de falar em voz alta o que entendeu, para "
+    "conferir se entendeu e se lembrou certo. Compare o que a pessoa disse com o "
+    "trecho do livro que ela leu.\n"
+    "Responda APENAS com um objeto JSON válido, sem cercas de código, no formato "
+    '{"points": array de {"said": string, "actual": string, "correct": boolean}, '
+    '"missed": array de strings}.\n'
+    '"points" tem uma entrada por afirmação que a pessoa fez. "said" resume a '
+    'afirmação dela em uma frase curta. "correct" é true quando a afirmação bate com '
+    'o trecho. Quando "correct" é false, "actual" diz em uma frase o que o trecho '
+    'de fato afirma; quando é true, deixe "actual" vazio.\n'
+    '"missed" lista o que o trecho traz de importante e a pessoa não mencionou, no '
+    "máximo três itens, cada um em uma frase curta.\n"
+    "Julgue apenas contra o trecho fornecido, nunca contra conhecimento externo: se "
+    "o trecho não permite decidir, trate a afirmação como correta. Acusar erro que "
+    "não houve é pior que deixar passar, porque a pessoa para de confiar na "
+    "conferência.\n"
 )
 
 FOLLOWUP_PROMPT = (
@@ -228,6 +254,39 @@ class ClaudeCliProcessor:
             if question and answer:
                 answers.append(Answer(question=question, answer=answer))
         return answers
+
+    def check_recall(self, spoken: str, passage: str) -> RecallCheck:
+        """Compare what was said against what was read, in one call."""
+        if not spoken.strip() or not passage.strip():
+            return RecallCheck()
+
+        payload = self._run(
+            RECALL_PROMPT
+            + f"\nTrecho lido:\n{passage}\n"
+            + f"\nO que a pessoa disse:\n{spoken}\n"
+        )
+
+        points: list[RecallPoint] = []
+        for entry in payload.get("points") or []:
+            if not isinstance(entry, dict):
+                continue
+            said = str(entry.get("said", "")).strip()
+            if not said:
+                continue
+            # Anything ambiguous counts as correct: a false accusation costs more
+            # than a miss, because it is what makes the check untrustworthy.
+            correct = bool(entry.get("correct", True))
+            actual = str(entry.get("actual", "")).strip()
+            if not correct and not actual:
+                correct = True
+            points.append(RecallPoint(said=said, actual=actual, correct=correct))
+
+        missed = [
+            str(item).strip()
+            for item in (payload.get("missed") or [])
+            if str(item).strip()
+        ]
+        return RecallCheck(points=points, missed=missed[:3])
 
     def answer_followup(
         self, question: str, history: list[tuple[str, str]], excerpt: str | None

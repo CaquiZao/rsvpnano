@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pathlib import Path
 
+from handy_bridge import note as note_mod
 from handy_bridge.note import (
     NoteData,
     render,
@@ -260,3 +261,57 @@ def test_append_followup_leaves_no_temp_file(tmp_path):
 def test_append_followup_on_a_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         append_followup(tmp_path / "nao-existe.md", "q", "a")
+
+
+# --- conferencia de recall --------------------------------------------------
+
+
+def test_recall_shows_what_was_said_beside_what_the_book_says():
+    out = render(
+        sample(
+            kind="recall",
+            recall_points=[
+                ("A física veio antes da química", "", True),
+                ("Átomos surgiram no primeiro segundo", "Surgiram alguns minutos depois", False),
+            ],
+        )
+    )
+    assert note_mod.RECALL_CALLOUT in out
+    # Lado a lado, com peso igual: o erro nao fica escondido.
+    assert "> ✓ **Você disse:** A física veio antes da química" in out
+    assert "> ✗ **Você disse:** Átomos surgiram no primeiro segundo" in out
+    assert "> **Na verdade:** Surgiram alguns minutos depois" in out
+
+
+def test_a_correct_point_has_no_actual_line():
+    out = render(sample(recall_points=[("Certo", "", True)]))
+    assert "Na verdade" not in out
+
+
+def test_missed_items_are_listed():
+    out = render(sample(recall_missed=["O trecho falava de Flores", "E de Java"]))
+    assert "> — **Passou batido:** O trecho falava de Flores" in out
+    assert "> — **Passou batido:** E de Java" in out
+
+
+def test_a_recall_correction_carries_the_unverified_warning():
+    out = render(sample(recall_points=[("X", "Y", False)]))
+    assert note_mod.RECALL_WARNING in out
+
+
+def test_without_a_recall_there_is_no_callout():
+    out = render(sample())
+    assert note_mod.RECALL_CALLOUT not in out
+    assert note_mod.RECALL_WARNING not in out
+
+
+def test_the_recall_block_comes_before_the_raw_transcript():
+    out = render(sample(recall_points=[("X", "", True)], answers=[("q", "a")]))
+    assert out.index(note_mod.RECALL_CALLOUT) < out.index("[!question]")
+    assert out.index("[!question]") < out.index(note_mod.RAW_CALLOUT)
+
+
+def test_a_blank_point_is_dropped_without_breaking_the_callout():
+    out = render(sample(recall_points=[("  ", "", True), ("Real", "", True)]))
+    assert "Real" in out
+    assert out.count("**Você disse:**") == 1

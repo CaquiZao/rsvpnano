@@ -54,7 +54,13 @@ class Chapter:
     index: int
     title: str
     word_count: int
+    # Folded text, used only for locating an excerpt.
     normalized: str
+    # The chapter as the book actually reads it. Accents and punctuation matter
+    # when the passage is handed to a model to check a recall against, so the
+    # normalised form is not good enough for that. Defaults empty for an index
+    # built by hand or loaded from an older cache; `passage` falls back.
+    text: str = ""
 
 
 @dataclass(frozen=True)
@@ -95,9 +101,44 @@ def build_index(epub_path: Path) -> BookIndex:
                 title=raw.title,
                 word_count=len(normalized.split()),
                 normalized=normalized,
+                text=raw.text,
             )
         )
     return BookIndex(chapters=chapters)
+
+
+def passage(
+    index: BookIndex, chapter: int, from_offset: int | None, to_offset: int | None
+) -> str:
+    """The stretch of a chapter read between two recordings.
+
+    Bounded to the chapter on both ends, which is what stops a long unrecorded
+    reading run from turning the window into most of the book.
+
+    The window is approximate: the offsets are counted by the device and the
+    chapter boundaries by the bridge, and those tokenizers disagree. That is
+    tolerable here in a way it is not for identifying the chapter — a window off
+    by a few percent still covers what was read, whereas a chapter off by one is
+    simply the wrong chapter. Clamping to the chapter is what bounds the error.
+    """
+    found = index.get(chapter)
+    if found is None:
+        return ""
+    body = found.text or found.normalized
+    if from_offset is None or to_offset is None:
+        return body
+
+    length = int(to_offset) - int(from_offset)
+    if length <= 0:
+        # Reading backwards, or two recordings at the same spot. Comparing against
+        # an empty window would be worse than comparing against the chapter.
+        return body
+
+    words = body.split()
+    within = max(0, int(from_offset) - index.start_of(chapter))
+    if within >= len(words):
+        return body
+    return " ".join(words[within : within + length])
 
 
 def _estimate(index: BookIndex, word_offset: int) -> Resolution | None:
@@ -177,7 +218,21 @@ def load_index(
     if cache.is_file():
         try:
             raw = json.loads(cache.read_text(encoding="utf-8"))
-            return BookIndex(chapters=[Chapter(**c) for c in raw["chapters"]])
+            return BookIndex(
+                chapters=[
+                    Chapter(
+                        index=int(c["index"]),
+                        title=str(c["title"]),
+                        word_count=int(c["word_count"]),
+                        # Recomputed rather than stored: keeping both forms on disk
+                        # would double a file that OneDrive has to sync, and
+                        # normalising a whole book costs a fraction of a second.
+                        normalized=normalize(c["text"]),
+                        text=str(c["text"]),
+                    )
+                    for c in raw["chapters"]
+                ]
+            )
         except (ValueError, KeyError, TypeError) as exc:
             log.warning("chapter cache for %r is unusable, rebuilding: %s", book_stem, exc)
 
@@ -194,7 +249,17 @@ def load_index(
         return index
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"chapters": [c.__dict__ for c in index.chapters]}
+        payload = {
+            "chapters": [
+                {
+                    "index": c.index,
+                    "title": c.title,
+                    "word_count": c.word_count,
+                    "text": c.text,
+                }
+                for c in index.chapters
+            ]
+        }
         tmp = cache.with_name(cache.name + ".partial")
         tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         tmp.replace(cache)

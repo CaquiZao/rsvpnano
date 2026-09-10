@@ -38,6 +38,11 @@ class NoteData:
     # (question, answer) pairs already resolved for this note. Kept as plain tuples so
     # rendering stays independent of the post-processing package.
     answers: list[tuple[str, str]] = field(default_factory=list)
+    # (said, actual, correct) triples from checking a recall against the book, and
+    # what the passage covered that went unmentioned. Plain tuples for the same
+    # reason as `answers`.
+    recall_points: list[tuple[str, str, bool]] = field(default_factory=list)
+    recall_missed: list[str] = field(default_factory=list)
 
 
 def slugify(text: str) -> str:
@@ -115,6 +120,8 @@ def render(note: NoteData) -> str:
         lines += [f"> {line}" for line in excerpt.splitlines()]
         lines.append("")
 
+    lines += render_recall(note.recall_points, note.recall_missed)
+
     # Answers are content the user wants to read, so they render expanded — unlike the
     # raw transcript below, which is reference material and stays collapsed.
     for question, answer in note.answers:
@@ -131,6 +138,40 @@ def render(note: NoteData) -> str:
 
 
 RAW_CALLOUT = "> [!note]- Transcrição original"
+
+RECALL_CALLOUT = "> [!success] Conferência do que você lembrou"
+RECALL_WARNING = "> *Conferência automática, não verificada.*"
+
+
+def render_recall(
+    points: list[tuple[str, str, bool]], missed: list[str]
+) -> list[str]:
+    """Show what was said next to what the book says, with equal weight.
+
+    Deliberately not a collapsed callout with only the corrected version on show.
+    The vault is self-test material, so the mistake is the part worth finding
+    again later — hiding it would optimise for reading and against remembering.
+    """
+    if not points and not missed:
+        return []
+
+    lines = [RECALL_CALLOUT, ">"]
+    for said, actual, correct in points:
+        if not said.strip():
+            continue
+        lines.append(f"> {'✓' if correct else '✗'} **Você disse:** {said.strip()}")
+        if not correct and actual.strip():
+            lines.append(f"> **Na verdade:** {actual.strip()}")
+        lines.append(">")
+    for item in missed:
+        if item.strip():
+            lines.append(f"> — **Passou batido:** {item.strip()}")
+    if missed:
+        lines.append(">")
+    # Same warning the answers carry, for the same reason: a correction that
+    # arrives on its own is read with less scepticism than one you went looking for.
+    lines += [RECALL_WARNING, ""]
+    return lines
 
 
 def render_qa(question: str, answer: str) -> list[str]:

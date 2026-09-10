@@ -144,3 +144,78 @@ def test_load_index_returns_none_for_a_broken_epub(tmp_path):
     bad.write_bytes(b"nao sou um zip")
     # Regra global: conveniencia quebrada nunca pode virar excecao no pipeline.
     assert chapters_mod.load_index(tmp_path / "fonte", "livro", bad) is None
+
+
+# --- janela de passagem para a correcao de recall ---------------------------
+
+WORDS = " ".join(f"w{n}" for n in range(1, 101))
+PASSAGE_IDX = chapters_mod.BookIndex(
+    chapters=[
+        chapters_mod.Chapter(1, "Um", 100, WORDS),
+        chapters_mod.Chapter(2, "Dois", 100, WORDS),
+        chapters_mod.Chapter(3, "Três", 100, WORDS),
+    ]
+)
+
+
+def test_passage_never_starts_before_the_chapter():
+    # Muita leitura sem gravar nao pode fazer a janela varrer o livro inteiro.
+    got = chapters_mod.passage(PASSAGE_IDX, chapter=3, from_offset=0, to_offset=99999)
+    assert got == WORDS
+
+
+def test_passage_starts_at_the_last_recall_when_it_is_inside_the_chapter():
+    # Capitulo 2 comeca na palavra 100; pedir de 150 a 160 pega 10 palavras.
+    got = chapters_mod.passage(PASSAGE_IDX, chapter=2, from_offset=150, to_offset=160)
+    assert got.split() == [f"w{n}" for n in range(51, 61)]
+
+
+def test_passage_clamps_the_end_to_the_chapter():
+    got = chapters_mod.passage(PASSAGE_IDX, chapter=1, from_offset=0, to_offset=100000)
+    assert got == WORDS
+
+
+def test_passage_with_no_progress_gives_the_whole_chapter():
+    # Primeiro recall do livro, ou offsets iguais: comparar contra nada nao serve.
+    got = chapters_mod.passage(PASSAGE_IDX, chapter=2, from_offset=None, to_offset=None)
+    assert got == WORDS
+
+
+def test_passage_with_an_inverted_window_gives_the_whole_chapter():
+    # Reler para tras deixaria a janela negativa; degrada em vez de devolver vazio.
+    got = chapters_mod.passage(PASSAGE_IDX, chapter=2, from_offset=180, to_offset=120)
+    assert got == WORDS
+
+
+def test_passage_for_an_unknown_chapter_is_empty():
+    assert chapters_mod.passage(PASSAGE_IDX, chapter=99, from_offset=0, to_offset=1) == ""
+
+
+def test_passage_uses_the_original_text_not_the_folded_one(tmp_path):
+    # Acentos e pontuacao importam quando a passagem vai para o modelo comparar.
+    epub = make_epub_with(
+        tmp_path / "livro.epub",
+        [("c1.xhtml", "<h1>Um</h1><p>A Revolução Agrícola foi a maior fraude.</p>")],
+    )
+    index = chapters_mod.build_index(epub)
+    got = chapters_mod.passage(index, 1, None, None)
+    assert "Revolução Agrícola" in got
+    assert "revolucao" not in got
+
+
+def test_the_cache_round_trips_the_original_text(tmp_path):
+    epub = make_epub_with(
+        tmp_path / "livro.epub",
+        [("c1.xhtml", "<h1>Um</h1><p>A Revolução Agrícola foi a maior fraude.</p>")],
+    )
+    src = tmp_path / "fonte"
+    chapters_mod.load_index(src, "livro", epub)
+    from_cache = chapters_mod.load_index(src, "livro", epub)
+    assert "Revolução Agrícola" in from_cache.chapters[0].text
+    # A forma normalizada e recomputada na carga, nao guardada no disco.
+    assert from_cache.chapters[0].normalized == chapters_mod.normalize(
+        from_cache.chapters[0].text
+    )
+    assert "text" in chapters_mod.index_cache_path(src, "livro").read_text(
+        encoding="utf-8"
+    )

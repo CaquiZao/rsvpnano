@@ -294,3 +294,62 @@ def test_answer_followup_rejects_output_without_an_answer():
     )
     with pytest.raises(PostProcessError, match="answer"):
         proc.answer_followup("q", history=[], excerpt=None)
+
+
+# --- conferencia de recall --------------------------------------------------
+
+
+def test_check_recall_parses_points_and_missed():
+    inner = (
+        '{"points": [{"said":"A veio antes de B","actual":"","correct":true},'
+        '{"said":"Atomos no primeiro segundo","actual":"Alguns minutos depois",'
+        '"correct":false}], "missed": ["O trecho falava de Flores"]}'
+    )
+    got = _processor(inner).check_recall("o que eu entendi", "trecho do livro")
+    assert [p.correct for p in got.points] == [True, False]
+    assert got.points[1].actual == "Alguns minutos depois"
+    assert got.missed == ["O trecho falava de Flores"]
+
+
+def test_check_recall_treats_an_unsupported_accusation_as_correct():
+    # Sem dizer o que o trecho de fato afirma, a acusacao nao se sustenta, e
+    # acusar errado e o que faz a pessoa parar de confiar na conferencia.
+    inner = '{"points": [{"said":"X","actual":"","correct":false}], "missed": []}'
+    got = _processor(inner).check_recall("falei", "trecho")
+    assert got.points[0].correct is True
+
+
+def test_check_recall_caps_the_missed_list_at_three():
+    inner = '{"points": [], "missed": ["a","b","c","d","e"]}'
+    assert len(_processor(inner).check_recall("f", "t").missed) == 3
+
+
+def test_check_recall_skips_the_call_without_a_passage():
+    calls = []
+
+    def runner(cmd, timeout):
+        calls.append(cmd)
+        return FakeCompleted(wrapper("{}"))
+
+    proc = ClaudeCliProcessor("m", runner=runner)
+    assert not proc.check_recall("falei bastante", "")
+    assert not proc.check_recall("", "trecho do livro")
+    # Nenhuma chamada gasta quando nao ha o que comparar.
+    assert calls == []
+
+
+def test_check_recall_drops_a_point_without_a_claim():
+    inner = '{"points": [{"said":"  ","actual":"x","correct":false}], "missed": []}'
+    assert _processor(inner).check_recall("f", "t").points == []
+
+
+def test_check_recall_sends_both_the_passage_and_the_speech():
+    seen = {}
+
+    def runner(cmd, timeout):
+        seen["prompt"] = cmd[2]
+        return FakeCompleted(wrapper('{"points": [], "missed": []}'))
+
+    ClaudeCliProcessor("m", runner=runner).check_recall("minha fala", "o trecho lido")
+    assert "minha fala" in seen["prompt"]
+    assert "o trecho lido" in seen["prompt"]
