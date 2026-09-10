@@ -22,11 +22,18 @@ log = logging.getLogger(__name__)
 
 
 class ProcessedIds:
-    """File ids já entregues ao worker.
+    """Note ids (o stem do arquivo) já entregues ao worker.
 
-    Existe porque remover do Drive pode falhar depois de a nota já ter sido
-    processada, e notas são fonte: escritas uma vez, nunca reescritas. Sem esta
-    lista, um delete falho viraria uma segunda nota no vault a cada poll.
+    A chave é o note_id, não o file id do Drive: um upload que falha no
+    sidecar é refeito pelo device, e files.create cunha um id novo a cada
+    tentativa sem impedir nomes repetidos. Duas tentativas da mesma gravação
+    têm ids diferentes e o mesmo stem -- só o stem identifica a gravação.
+    Marcar por file id deixaria o retry passar como nota nova.
+
+    Esta lista existe porque remover do Drive pode falhar depois de a nota já
+    ter sido processada, e notas são fonte: escritas uma vez, nunca
+    reescritas. Sem esta lista, um delete falho viraria uma segunda nota no
+    vault a cada poll.
     """
 
     def __init__(self, path: Path):
@@ -41,8 +48,8 @@ class ProcessedIds:
     def snapshot(self) -> set[str]:
         return set(self._ids)
 
-    def add(self, file_id: str) -> None:
-        self._ids.add(file_id)
+    def add(self, note_id: str) -> None:
+        self._ids.add(note_id)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         # Escrita atômica: o mesmo cuidado das notas, porque um arquivo de
         # estado truncado faria o bridge reprocessar tudo.
@@ -89,13 +96,18 @@ class DrivePoller:
             # Marcado antes de entregar: se o processo morrer entre as duas
             # coisas, a nota é perdida uma vez. Marcar depois arriscaria
             # reprocessar e escrever a nota duas vezes, que é pior porque nada
-            # no vault reconciliaria as duas.
-            self._state.add(note.wav.id)
+            # no vault reconciliaria as duas. A chave é o note_id (o stem):
+            # um retry do device sobe o mesmo arquivo com um file id novo, e
+            # é o stem que identifica a gravação já entregue.
+            self._state.add(note.note_id)
             self._submit(IncomingNote(note_id=note.note_id, wav_path=target, meta=meta))
             handed += 1
             log.info("nota %s recebida pelo Drive", note.note_id)
 
-            for remote_id in filter(None, (note.wav.id, note.sidecar.id if note.sidecar else None)):
+            remote_ids = [note.wav.id, *(f.id for f in note.extra_copies)]
+            if note.sidecar is not None:
+                remote_ids.append(note.sidecar.id)
+            for remote_id in remote_ids:
                 try:
                     self._drive.delete(remote_id)
                 except Exception as exc:  # noqa: BLE001 - remover é melhor-esforço

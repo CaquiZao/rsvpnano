@@ -7,7 +7,7 @@ firmware keeps them in planFrom() on the SD card, not in the uploader.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 WAV_SUFFIX = ".wav"
@@ -30,6 +30,11 @@ class ReadyNote:
     note_id: str
     wav: RemoteFile
     sidecar: RemoteFile | None
+    # A retry after a failed sidecar re-uploads the .wav under a new file id,
+    # so the same stem can show up more than once in a single listing. These
+    # are the losers of that race: the caller must delete them, not turn them
+    # into notes of their own.
+    extra_copies: list[RemoteFile] = field(default_factory=list)
 
 
 def plan_inbox(
@@ -46,17 +51,27 @@ def plan_inbox(
     }
     grace = timedelta(seconds=grace_s)
 
+    # Grouped by note_id (the stem), not by file id: Drive mints a new id on
+    # every files.create and never enforces unique names, so a retried
+    # upload leaves two .wav with different ids but the same stem. The stem
+    # is the only thing that identifies the recording -- it is what "already
+    # processed" and "already offered" both have to mean.
+    wavs_by_note: dict[str, list[RemoteFile]] = {}
+    for f in files:
+        if not f.name.lower().endswith(WAV_SUFFIX):
+            continue
+        wavs_by_note.setdefault(f.name[: -len(WAV_SUFFIX)], []).append(f)
+
     ready: list[ReadyNote] = []
-    for wav in files:
-        if not wav.name.lower().endswith(WAV_SUFFIX):
+    for note_id, wavs in wavs_by_note.items():
+        if note_id in processed_ids:
             continue
-        if wav.id in processed_ids:
-            continue
-        note_id = wav.name[: -len(WAV_SUFFIX)]
+        wavs.sort(key=lambda w: w.created_at)
+        wav, *extra_copies = wavs
         sidecar = sidecars.get(note_id)
         if sidecar is None and now - wav.created_at < grace:
             continue  # May be an upload in flight.
-        ready.append(ReadyNote(note_id=note_id, wav=wav, sidecar=sidecar))
+        ready.append(ReadyNote(note_id=note_id, wav=wav, sidecar=sidecar, extra_copies=extra_copies))
 
     ready.sort(key=lambda r: r.wav.created_at)
     return ready

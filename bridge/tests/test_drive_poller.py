@@ -103,13 +103,45 @@ def test_a_failed_delete_does_not_produce_a_second_note(tmp_path):
 def test_a_note_already_processed_in_an_earlier_run_is_skipped(tmp_path):
     cfg = make_cfg(tmp_path)
     state_path = tmp_path / "seen.json"
-    ProcessedIds(state_path).add("w1")
+    ProcessedIds(state_path).add("20260910-120000")
 
     submitted = []
     poller = DrivePoller(cfg, FakeDrive(pair(), blobs()), submitted.append,
                          ProcessedIds(state_path), now=lambda: NOW)
     assert poller.poll_once() == 0
     assert submitted == []
+
+
+def test_the_state_file_records_the_note_id(tmp_path):
+    # A chave do estado é o note_id (o stem), não o file id do Drive: um
+    # retry do device sobe o mesmo arquivo com um id novo, e é o stem que
+    # identifica a gravação já entregue.
+    cfg = make_cfg(tmp_path)
+    state_path = tmp_path / "seen.json"
+    poller = DrivePoller(cfg, FakeDrive(pair(), blobs()), lambda n: None,
+                         ProcessedIds(state_path), now=lambda: NOW)
+    poller.poll_once()
+    assert json.loads(state_path.read_text(encoding="utf-8")) == ["20260910-120000"]
+
+
+def test_the_poller_deletes_extra_copies_along_with_the_wav_and_sidecar(tmp_path):
+    cfg = make_cfg(tmp_path)
+    files = [
+        RemoteFile("w1", "20260910-120000.wav", NOW - timedelta(minutes=10)),
+        RemoteFile("w2", "20260910-120000.wav", NOW - timedelta(minutes=1)),
+        RemoteFile("s1", "20260910-120000.json", NOW - timedelta(minutes=1)),
+    ]
+    blob = {
+        "w1": b"RIFFxxxx",
+        "w2": b"RIFFyyyy",
+        "s1": json.dumps({"clock_synced": True}).encode("utf-8"),
+    }
+    drive = FakeDrive(files, blob)
+    poller = DrivePoller(cfg, drive, lambda n: None, ProcessedIds(tmp_path / "seen.json"),
+                         now=lambda: NOW)
+
+    assert poller.poll_once() == 1
+    assert sorted(drive.deleted) == ["s1", "w1", "w2"]
 
 
 def test_an_unreadable_sidecar_does_not_cost_the_note(tmp_path):
