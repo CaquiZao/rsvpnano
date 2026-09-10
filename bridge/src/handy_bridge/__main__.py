@@ -30,6 +30,11 @@ def main(argv: list[str] | None = None) -> int:
         level=args.log_level.upper(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # httpx logs every request URL at INFO, and the Telegram bot token is part of
+    # the URL — so at info level the token ends up in the log file, and in any log
+    # the user pastes somewhere. Warnings still come through, which is what
+    # matters for diagnosing a failed call.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     try:
         cfg = load_config(args.config)
