@@ -11,6 +11,7 @@ import logging
 import posixpath
 import re
 import zipfile
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from xml.etree import ElementTree
@@ -99,12 +100,45 @@ def _spine_hrefs(archive: zipfile.ZipFile) -> list[str]:
     return hrefs
 
 
-def convert_to_markdown(epub_path: Path, out_path: Path) -> Path:
-    epub_path, out_path = Path(epub_path), Path(out_path)
+@dataclass(frozen=True)
+class RawChapter:
+    """One spine entry, with its title peeled off the body.
+
+    `heading` keeps the original markdown heading line so `convert_to_markdown`
+    can reproduce the level the book actually used. Without it, rebuilding the
+    flat markdown from chapters would normalise every title to `#` and change
+    output that is already being consumed elsewhere.
+    """
+
+    title: str
+    text: str
+    heading: str | None = None
+
+
+_HEADING_LINE = re.compile(r"^#{1,6}[ \t]+(?P<title>.+?)[ \t]*$", re.MULTILINE)
+
+# A heading further in than this is a section break inside the chapter, not the
+# chapter's own title.
+_TITLE_SEARCH_LIMIT = 200
+
+
+def _split_title(text: str, fallback: str) -> tuple[str, str, str | None]:
+    """Return (title, body without the heading, original heading line)."""
+    match = _HEADING_LINE.search(text)
+    if match is None or match.start() > _TITLE_SEARCH_LIMIT:
+        return fallback, text, None
+    title = match.group("title").strip()
+    body = (text[: match.start()] + text[match.end() :]).strip()
+    return title or fallback, body, match.group(0).strip()
+
+
+def convert_to_chapters(epub_path: Path) -> list[RawChapter]:
+    """Split an epub into chapters, one per spine entry."""
+    epub_path = Path(epub_path)
     if not zipfile.is_zipfile(epub_path):
         raise EpubError(f"not a valid epub (not a zip): {epub_path}")
 
-    chunks: list[str] = []
+    chapters: list[RawChapter] = []
     with zipfile.ZipFile(epub_path) as archive:
         for href in _spine_hrefs(archive):
             try:
@@ -115,8 +149,19 @@ def convert_to_markdown(epub_path: Path, out_path: Path) -> Path:
             parser = _ChapterParser()
             parser.feed(raw.decode("utf-8", errors="replace"))
             text = parser.text()
-            if text:
-                chunks.append(text)
+            if not text:
+                continue
+            title, body, heading = _split_title(text, f"Capítulo {len(chapters) + 1}")
+            chapters.append(RawChapter(title=title, text=body, heading=heading))
+    return chapters
+
+
+def convert_to_markdown(epub_path: Path, out_path: Path) -> Path:
+    out_path = Path(out_path)
+    chunks = [
+        f"{chapter.heading}\n\n{chapter.text}" if chapter.heading else chapter.text
+        for chapter in convert_to_chapters(epub_path)
+    ]
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(out_path.name + ".partial")
