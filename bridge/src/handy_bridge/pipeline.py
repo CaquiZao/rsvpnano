@@ -12,7 +12,7 @@ from handy_bridge import kanban
 from handy_bridge import wav as wav_mod
 from handy_bridge.config import AsrConfig, Config
 from handy_bridge.epub import EpubError, ensure_book_markdown
-from handy_bridge.note import NoteData, write_note
+from handy_bridge.note import NoteData, inbox_path_for, write_note
 from handy_bridge.postprocess import Answer, PostProcessError, PostProcessor, Task
 from handy_bridge.telegram import build_message
 from handy_bridge.transcriber import Transcription
@@ -114,7 +114,8 @@ def process_note(
 
     word_offset = incoming.meta.get("word_offset")
     note_path = write_note(
-        cfg.inbox_path,
+        # One folder per book, matching the Kanban board for the same reading.
+        inbox_path_for(cfg.inbox_path, book),
         NoteData(
             title=title,
             tags=tags,

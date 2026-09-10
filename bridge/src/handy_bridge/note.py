@@ -6,7 +6,7 @@ import os
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 _FORBIDDEN = '<>:"\\|?*'
 
@@ -143,6 +143,22 @@ def append_followup(path: Path, question: str, answer: str) -> Path:
     tmp.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     os.replace(tmp, path)
     return path
+
+
+# Notes with no book share one folder, named like the Kanban board that collects
+# the same recordings, so the two views of a reading session line up.
+GENERAL_FOLDER = "Geral"
+
+
+def inbox_path_for(inbox: Path, book_stem: str | None) -> Path:
+    """One subfolder per book: reading two at once made a flat Inbox unreadable."""
+    name = (book_stem or "").strip()
+    # The stem comes off the device, so take only the last path component: a name
+    # carrying separators must not be able to write outside the inbox.
+    name = PurePosixPath(name.replace("\\", "/")).name if name else ""
+    if not name or name in {".", ".."}:
+        name = GENERAL_FOLDER
+    return Path(inbox) / name
 
 
 def _unique_path(inbox: Path, stem: str) -> Path:

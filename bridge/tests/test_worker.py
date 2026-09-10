@@ -52,7 +52,9 @@ def test_processes_submitted_notes(tmp_path):
     )
     worker.stop(timeout=10)
 
-    notes = list((cfg.inbox_path).glob("*.md"))
+    # These notes carry no book, so they land in the general folder rather than
+    # loose in the inbox: one subfolder per book keeps parallel readings apart.
+    notes = list((cfg.inbox_path / "Geral").glob("*.md"))
     assert len(notes) == 1
     assert "ola" in notes[0].read_text(encoding="utf-8")
 
@@ -77,6 +79,8 @@ def test_one_failure_does_not_kill_the_worker(tmp_path):
     )
     worker.stop(timeout=10)
 
-    notes = list((cfg.inbox_path).glob("*.md"))
+    # These notes carry no book, so they land in the general folder rather than
+    # loose in the inbox: one subfolder per book keeps parallel readings apart.
+    notes = list((cfg.inbox_path / "Geral").glob("*.md"))
     assert len(notes) == 1
     assert "segunda" in notes[0].read_text(encoding="utf-8")

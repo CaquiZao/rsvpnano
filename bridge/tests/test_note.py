@@ -2,7 +2,15 @@ import pytest
 
 from datetime import datetime
 
-from handy_bridge.note import NoteData, render, slugify, write_note
+from pathlib import Path
+
+from handy_bridge.note import (
+    NoteData,
+    inbox_path_for,
+    render,
+    slugify,
+    write_note,
+)
 
 
 def sample(**over) -> NoteData:
@@ -206,3 +214,31 @@ def test_append_followup_leaves_no_temp_file(tmp_path):
 def test_append_followup_on_a_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         append_followup(tmp_path / "nao-existe.md", "q", "a")
+
+
+# --- uma subpasta por livro -------------------------------------------------
+
+
+def test_notes_from_a_book_go_into_a_folder_named_after_it():
+    # Reading two books at once put every note in one flat Inbox, which is what
+    # prompted this. The folder name matches the Kanban board for the same book.
+    assert inbox_path_for(Path("/vault/Inbox"), "sapiens") == Path("/vault/Inbox/sapiens")
+
+
+def test_a_note_with_no_book_lands_in_the_general_folder():
+    assert inbox_path_for(Path("/vault/Inbox"), None) == Path("/vault/Inbox/Geral")
+
+
+def test_an_empty_book_name_is_treated_as_no_book():
+    assert inbox_path_for(Path("/vault/Inbox"), "") == Path("/vault/Inbox/Geral")
+
+
+def test_a_book_name_with_path_separators_cannot_escape_the_inbox():
+    # The book stem arrives from the device, so it is not trusted to be a bare name.
+    assert inbox_path_for(Path("/vault/Inbox"), "../../etc") == Path("/vault/Inbox/etc")
+
+
+def test_write_note_creates_the_book_folder(tmp_path):
+    target = write_note(inbox_path_for(tmp_path, "sapiens"), sample(book="sapiens"))
+    assert target.parent == tmp_path / "sapiens"
+    assert target.exists()
