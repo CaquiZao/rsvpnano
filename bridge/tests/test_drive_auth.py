@@ -3,7 +3,12 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 from handy_bridge.config import DriveConfig
-from handy_bridge.drive_auth import build_consent_url, device_toml, exchange_code
+from handy_bridge.drive_auth import (
+    build_consent_url,
+    device_toml,
+    exchange_code,
+    read_redirect,
+)
 
 
 class FakeResponse:
@@ -19,7 +24,7 @@ class FakeResponse:
 
 
 def test_the_consent_url_asks_only_for_drive_file_and_offline_access():
-    url = build_consent_url("cid", "http://127.0.0.1:9004/")
+    url = build_consent_url("cid", "http://127.0.0.1:9004/", "st4te")
     query = parse_qs(urlparse(url).query)
     assert query["scope"] == ["https://www.googleapis.com/auth/drive.file"]
     # Sem access_type=offline não vem refresh token, e sem refresh token o
@@ -82,3 +87,36 @@ def test_transport_exception_is_wrapped():
 
     with pytest.raises(RuntimeError, match="RuntimeError"):
         exchange_code("cid", "csec", "c", "http://127.0.0.1:9004/", requester)
+
+
+def test_the_consent_url_carries_a_state():
+    url = build_consent_url("cid", "http://127.0.0.1:9004/", "st4te")
+    assert parse_qs(urlparse(url).query)["state"] == ["st4te"]
+
+
+def test_a_redirect_with_the_wrong_state_is_not_accepted():
+    # O loopback fica 300 s aceitando qualquer GET em 127.0.0.1:9004. Sem
+    # state, uma página aberta nessa janela injeta o próprio `code` e liga o
+    # bridge ao Drive de outra pessoa.
+    redirect = read_redirect("/?code=de-outra-pessoa&state=nao-e-o-meu", "st4te")
+    assert redirect is not None
+    assert redirect.state_ok is False
+
+
+def test_a_redirect_with_the_right_state_is_accepted():
+    redirect = read_redirect("/?code=o-meu&state=st4te", "st4te")
+    assert redirect.state_ok is True
+    assert redirect.code == "o-meu"
+
+
+def test_a_request_that_is_not_the_redirect_is_ignored():
+    # Um favicon pedido pelo navegador encerrava a espera e abortava o
+    # consentimento antes de o Google responder.
+    assert read_redirect("/favicon.ico", "st4te") is None
+
+
+def test_a_refused_consent_is_the_redirect_too():
+    redirect = read_redirect("/?error=access_denied&state=st4te", "st4te")
+    assert redirect is not None
+    assert redirect.code == ""
+    assert redirect.error == "access_denied"
