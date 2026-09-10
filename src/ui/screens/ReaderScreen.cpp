@@ -745,14 +745,18 @@ namespace screens {
         if (width <= 0) {
             return;
         }
-        const int16_t chapterY = static_cast<int16_t>(ui.height() - 8);
-        const int16_t bookY = static_cast<int16_t>(ui.height() - 4);
+        // The band between the reading area, which ends at height - 36, and the footer
+        // text, which starts at height - 26 and runs to the bottom of the panel. Drawing
+        // any lower puts the bars on top of the chapter name and the percentages, and
+        // the clearing fill erases them outright.
+        const int16_t chapterY = static_cast<int16_t>(ui.height() - 34);
+        const int16_t bookY = static_cast<int16_t>(ui.height() - 30);
 
         uint32_t state = ui::Context::combine(bookPercent, position.percentInChapter);
         state = ui::Context::combine(state, static_cast<uint32_t>(noteMarks.size()));
         state = ui::Context::combine(state, static_cast<uint32_t>(position.index));
         state = ui::Context::combine(state, pendingNotes > 0 ? 1U : 0U);
-        const ui::Rect area{left, static_cast<int16_t>(chapterY - 3), width, 8};
+        const ui::Rect area{left, static_cast<int16_t>(chapterY - 1), width, 6};
         if (!ui.redraw(area, state)) {
             return;
         }
@@ -781,7 +785,7 @@ namespace screens {
         if (pendingNotes > 0) {
             // A note is recorded but not yet in the vault. Discreet on purpose: it is
             // reassurance that nothing was lost, not something to act on while reading.
-            gfx.fillRect(static_cast<int16_t>(left + width - 3), static_cast<int16_t>(chapterY - 3), 3, 3,
+            gfx.fillRect(static_cast<int16_t>(left + width - 3), static_cast<int16_t>(chapterY - 1), 3, 3,
                          ui.color(ui::themes::ColorRole::Accent));
         }
 
@@ -790,7 +794,9 @@ namespace screens {
                 continue; // Belongs to another chapter's bar.
             }
             const int16_t x = reading::markOffset(width, mark, position.firstWord, position.lastWord);
-            gfx.fillRect(static_cast<int16_t>(left + x), static_cast<int16_t>(chapterY - 3), 2, 3,
+            // Drawn over the chapter bar rather than above it: one pixel higher would
+            // reach into the last line of text.
+            gfx.fillRect(static_cast<int16_t>(left + x), static_cast<int16_t>(chapterY - 1), 2, 4,
                          ui.color(ui::themes::ColorRole::Accent));
         }
     }
