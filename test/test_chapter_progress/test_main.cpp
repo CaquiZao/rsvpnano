@@ -89,6 +89,49 @@ namespace {
         TEST_ASSERT_TRUE(reading::chapterPositionAt(chapters, 10, 100).title.empty());
     }
 
+
+    // --- limites do capitulo, para posicionar as marcas ---------------------
+
+    void test_the_chapter_reports_the_words_it_spans() {
+        const std::array<ChapterMarker, 3> chapters = {ChapterMarker{"um", 0}, ChapterMarker{"dois", 100},
+                                                       ChapterMarker{"tres", 200}};
+        const auto p = reading::chapterPositionAt(chapters, 150, 300);
+        TEST_ASSERT_EQUAL_UINT32(100, p.firstWord);
+        TEST_ASSERT_EQUAL_UINT32(200, p.lastWord);
+    }
+
+    void test_the_last_chapter_spans_to_the_end_of_the_book() {
+        const std::array<ChapterMarker, 2> chapters = {ChapterMarker{"um", 0}, ChapterMarker{"dois", 100}};
+        const auto p = reading::chapterPositionAt(chapters, 150, 200);
+        TEST_ASSERT_EQUAL_UINT32(100, p.firstWord);
+        TEST_ASSERT_EQUAL_UINT32(200, p.lastWord);
+    }
+
+    // --- posicao de uma marca dentro da barra -------------------------------
+
+    void test_a_mark_at_the_chapter_start_sits_at_the_left_edge() {
+        TEST_ASSERT_EQUAL_INT16(0, reading::markOffset(100, 50, 50, 150));
+    }
+
+    void test_a_mark_halfway_through_sits_halfway_along() {
+        TEST_ASSERT_EQUAL_INT16(50, reading::markOffset(100, 100, 50, 150));
+    }
+
+    void test_a_mark_past_the_chapter_is_clamped_inside_the_bar() {
+        // A note taken before the reader moved back a chapter must not draw outside
+        // the bar and over whatever the theme put next to it.
+        TEST_ASSERT_EQUAL_INT16(99, reading::markOffset(100, 900, 50, 150));
+        TEST_ASSERT_EQUAL_INT16(0, reading::markOffset(100, 1, 50, 150));
+    }
+
+    void test_an_empty_chapter_puts_the_mark_at_the_start() {
+        TEST_ASSERT_EQUAL_INT16(0, reading::markOffset(100, 50, 50, 50));
+    }
+
+    void test_a_bar_with_no_width_yields_no_offset() {
+        TEST_ASSERT_EQUAL_INT16(0, reading::markOffset(0, 100, 50, 150));
+    }
+
 } // namespace
 
 int main(int, char**) {
@@ -104,5 +147,12 @@ int main(int, char**) {
     RUN_TEST(test_a_position_past_the_word_count_is_clamped);
     RUN_TEST(test_the_chapter_count_is_reported_for_the_label);
     RUN_TEST(test_an_untitled_chapter_yields_an_empty_title_not_a_crash);
+    RUN_TEST(test_the_chapter_reports_the_words_it_spans);
+    RUN_TEST(test_the_last_chapter_spans_to_the_end_of_the_book);
+    RUN_TEST(test_a_mark_at_the_chapter_start_sits_at_the_left_edge);
+    RUN_TEST(test_a_mark_halfway_through_sits_halfway_along);
+    RUN_TEST(test_a_mark_past_the_chapter_is_clamped_inside_the_bar);
+    RUN_TEST(test_an_empty_chapter_puts_the_mark_at_the_start);
+    RUN_TEST(test_a_bar_with_no_width_yields_no_offset);
     return UNITY_END();
 }

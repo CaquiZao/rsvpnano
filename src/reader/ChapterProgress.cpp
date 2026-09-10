@@ -43,10 +43,23 @@ namespace reading {
 
         position.index = index;
         position.title = chapters[index].title;
+        position.firstWord = start;
+        position.lastWord = end;
         if (end > start && wordIndex > start) {
             position.percentInChapter = percentOf(wordIndex - start, end - start);
         }
         return position;
+    }
+
+    int16_t markOffset(int16_t width, size_t wordIndex, size_t firstWord, size_t lastWord) {
+        if (width <= 0 || lastWord <= firstWord || wordIndex <= firstWord) {
+            return 0;
+        }
+        const size_t span = lastWord - firstWord;
+        const size_t into = std::min(wordIndex - firstWord, span);
+        const int32_t offset = static_cast<int32_t>((into * static_cast<size_t>(width)) / span);
+        // The last pixel is still inside the bar; width itself is one past it.
+        return static_cast<int16_t>(std::min<int32_t>(offset, width - 1));
     }
 
 } // namespace reading
