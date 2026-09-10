@@ -115,6 +115,16 @@ def test_deletes_the_file():
     assert seen["url"].endswith("/files/w1")
 
 
+def test_deletes_the_file_treating_404_as_success():
+    def requester(method, url, **kw):
+        if url.endswith("/token"):
+            return FakeResponse(200, {"access_token": "at", "expires_in": 3599})
+        return FakeResponse(404)
+
+    # Should not raise; 404 means the file is already gone, which is the goal.
+    Drive(CFG, requester=requester).delete("w1")
+
+
 def test_an_http_error_on_listing_raises():
     def requester(method, url, **kw):
         if url.endswith("/token"):
@@ -123,3 +133,15 @@ def test_an_http_error_on_listing_raises():
 
     with pytest.raises(DriveError, match="insufficientPermissions"):
         Drive(CFG, requester=requester).list_inbox()
+
+
+def test_network_error_on_token_exchange_does_not_leak_credentials():
+    def requester(method, url, **kw):
+        raise OSError("connection reset by peer")
+
+    with pytest.raises(DriveError, match="OSError") as caught:
+        Drive(CFG, requester=requester).access_token()
+    # Ensure no credential appears in the error message
+    assert "rtok" not in str(caught.value)
+    assert "csec" not in str(caught.value)
+    assert "cid" not in str(caught.value)
