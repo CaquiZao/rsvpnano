@@ -926,7 +926,9 @@ from handy_bridge.drive_poller import DrivePoller, ProcessedIds
 from handy_bridge.transcriber import Transcription
 from handy_bridge.worker import NoteWorker
 
-from tests.test_drive_poller import FakeDrive, make_cfg
+# Sem prefixo `tests.`: não há tests/__init__.py, e esta é a convenção do repo
+# (test_chapters.py e test_pipeline.py importam de test_epub assim).
+from test_drive_poller import FakeDrive, make_cfg
 
 NOW = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
 
@@ -1099,6 +1101,7 @@ problema que não existe.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import http.server
 import threading
 import urllib.parse
@@ -1214,7 +1217,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f'refresh_token = "{token}"')
 
     args.out.write_text(
-        device_toml(DriveConfig(**{**cfg.__dict__, "refresh_token": token})), encoding="utf-8"
+        device_toml(dataclasses.replace(cfg, refresh_token=token)), encoding="utf-8"
     )
     print(f"\ne copie {args.out} para /config/drive.toml no cartão do device")
     return 0
@@ -1441,6 +1444,7 @@ Mesmo desenho do `VoiceUploadBody`, e pela mesma razão: montagem de corpo cabe 
 ```cpp
 #include <unity.h>
 
+#include <cstring>   // strstr, usado nos asserts abaixo
 #include <string>
 
 #include "voice/DriveRequest.h"
