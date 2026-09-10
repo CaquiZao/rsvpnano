@@ -85,6 +85,20 @@ def spine_order(zf: zipfile.ZipFile) -> list[str]:
     return ordered
 
 
+def is_contents_document(doc: str) -> bool:
+    """True for a page that is itself a table of contents.
+
+    Such a page lists every chapter title, so a title not found in the body will
+    always be found here — and the anchor lands at the end of the book instead of
+    at the chapter. Measured by how little text sits between its links.
+    """
+    links = len(re.findall(r"<a[ >]", doc, re.I))
+    if links < 15:
+        return False
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", doc)).strip()
+    return len(text) / links < 220
+
+
 def _inside_link(doc: str, start: int, end: int) -> bool:
     """True when the match sits inside an <a>...</a>, i.e. it is a TOC link."""
     open_at = doc.rfind("<a ", 0, start)
@@ -149,6 +163,9 @@ def repair(zf: zipfile.ZipFile, ncx_name: str) -> tuple[dict[str, str], str, int
     entries = parse_navpoints(ncx)
     order = spine_order(zf)
     docs = {name: zf.read(name).decode("utf-8", "replace") for name in order}
+    # Contents pages are never anchor targets: every title appears on them, so a
+    # title missing from the body would otherwise anchor to the end of the book.
+    contents_pages = {name for name, doc in docs.items() if is_contents_document(doc)}
 
     # Insertions are collected per document and applied at the end, so offsets
     # found during the scan stay valid while scanning.
@@ -160,8 +177,10 @@ def repair(zf: zipfile.ZipFile, ncx_name: str) -> tuple[dict[str, str], str, int
     # Two entries must never claim the same spot, or the second silently
     # overwrites the first and one chapter disappears.
     taken: set[tuple[int, int]] = set()
+    # Collected first, applied after the ordering pass below.
+    placed: list[tuple[int, Entry, int, str, int]] = []
 
-    for entry in entries:
+    for toc_index, entry in enumerate(entries):
         if not entry.fragment:
             skipped += 1
             continue
@@ -176,6 +195,10 @@ def repair(zf: zipfile.ZipFile, ncx_name: str) -> tuple[dict[str, str], str, int
                     search_doc = 0 if from_start else doc_index
                     search_pos = 0 if from_start else position
                     while search_doc < len(order):
+                        if order[search_doc] in contents_pages:
+                            search_doc += 1
+                            search_pos = 0
+                            continue
                         hit = _find(docs[order[search_doc]], candidate, search_pos, headings_only)
                         if hit != -1 and (search_doc, hit) not in taken:
                             located = (search_doc, hit)
@@ -199,10 +222,47 @@ def repair(zf: zipfile.ZipFile, ncx_name: str) -> tuple[dict[str, str], str, int
         taken.add(located)
         name = order[found_doc]
         anchor_at = _element_start(docs[name], offset)
-        pending[name].append((anchor_at, f'<span id="{entry.fragment}"></span>'))
-        ncx = ncx.replace(entry.raw, entry.raw.replace(f'"{entry.src}#', f'"{name}#'), 1)
+        # Position in the whole book, so ordering can be compared across documents.
+        flow = found_doc * 10**9 + anchor_at
+        placed.append((toc_index, entry, flow, name, anchor_at))
         if (found_doc, offset) >= (doc_index, position):
             doc_index, position = found_doc, offset + 1
+
+    # Chapters must not run backwards. A match that lands before the previous
+    # chapter is a false positive somewhere in the pair, and following it would
+    # send the reader back up the book. Keeping the longest run that does move
+    # forward drops the guesses and keeps every anchor that agrees with the rest.
+    placed.sort(key=lambda item: item[0])
+    best: list[int] = []
+    parent: list[int] = [-1] * len(placed)
+    for i in range(len(placed)):
+        lo, hi = 0, len(best)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if placed[best[mid]][2] < placed[i][2]:
+                lo = mid + 1
+            else:
+                hi = mid
+        if lo > 0:
+            parent[i] = best[lo - 1]
+        if lo == len(best):
+            best.append(i)
+        else:
+            best[lo] = i
+    keep: set[int] = set()
+    cursor = best[-1] if best else -1
+    while cursor != -1:
+        keep.add(cursor)
+        cursor = parent[cursor]
+
+    pending = {name: [] for name in order}
+    repaired = 0
+    for i, (_order_index, entry, location, name, anchor_at) in enumerate(placed):
+        if i not in keep:
+            skipped += 1
+            continue
+        pending[name].append((anchor_at, f'<span id="{entry.fragment}"></span>'))
+        ncx = ncx.replace(entry.raw, entry.raw.replace(f'"{entry.src}#', f'"{name}#'), 1)
         repaired += 1
 
     rewritten: dict[str, str] = {}
