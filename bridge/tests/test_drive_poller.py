@@ -123,6 +123,15 @@ def test_an_unreadable_sidecar_does_not_cost_the_note(tmp_path):
     assert submitted[0].meta == {}
 
 
+def test_stop_waits_for_the_thread_to_actually_stop(tmp_path):
+    cfg = make_cfg(tmp_path)
+    poller = DrivePoller(cfg, FakeDrive([], {}), lambda n: None,
+                         ProcessedIds(tmp_path / "seen.json"), now=lambda: NOW)
+    poller.start()
+    poller.stop()
+    assert not poller._thread.is_alive()
+
+
 def test_nothing_ready_means_nothing_submitted(tmp_path):
     cfg = make_cfg(tmp_path)
     submitted = []
