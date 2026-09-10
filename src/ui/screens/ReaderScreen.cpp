@@ -818,8 +818,76 @@ namespace screens {
                      chapter == nullptr ? session.metadata.locale : session.metadata.localeAt(chapter->wordIndex));
             ui.label({footerX, static_cast<int16_t>(ui.height() - 26), footerWidth, 26}, footer, 2,
                      ui::themes::ColorRole::Muted, settings.leftHanded ? ui::TextAlign::Left : ui::TextAlign::Right);
+            if (showProgress) {
+                drawProgressBars(ui, progress);
+            }
             ui.battery(batteryRect(ui.width()), battery.status.percent, battery.charging, batteryLabel,
                        showBatteryIcon);
+        }
+    }
+
+    // Two bars, because one does not tell the reader anything useful. Reading a whole
+    // chapter of a long book moves the book bar by under 4%, which reads as no progress
+    // at all; the chapter bar is the one that visibly moves while you read. The book
+    // bar stays, thinner, because it answers a different question.
+    //
+    // Notes taken in this chapter are ticked onto the chapter bar. They are the
+    // reader's own marks on the page, and the point of taking them in place.
+    void ReaderScreen::drawProgressBars(ui::Context& ui, uint8_t bookPercent) {
+        const auto position = reading::chapterPositionAt(session.metadata.chapters, session.state.wordIndex,
+                                                         ReadingLoop::wordCount(session));
+        const int16_t left = 18;
+        const int16_t width = static_cast<int16_t>(ui.width() - 36);
+        if (width <= 0) {
+            return;
+        }
+        const int16_t chapterY = static_cast<int16_t>(ui.height() - 8);
+        const int16_t bookY = static_cast<int16_t>(ui.height() - 4);
+
+        uint32_t state = ui::Context::combine(bookPercent, position.percentInChapter);
+        state = ui::Context::combine(state, static_cast<uint32_t>(noteMarks.size()));
+        state = ui::Context::combine(state, static_cast<uint32_t>(position.index));
+        state = ui::Context::combine(state, pendingNotes > 0 ? 1U : 0U);
+        const ui::Rect area{left, static_cast<int16_t>(chapterY - 3), width, 8};
+        if (!ui.redraw(area, state)) {
+            return;
+        }
+
+        Arduino_GFX& gfx = ui.gfx();
+        gfx.fillRect(area.x, area.y, area.w, area.h, ui.color(ui::themes::ColorRole::Background));
+
+        // Book bar thinner, so the chapter bar reads as the primary one.
+        gfx.fillRect(left, bookY, width, 1, ui.color(ui::themes::ColorRole::SurfaceMuted));
+        const int16_t bookFilled = static_cast<int16_t>((static_cast<int32_t>(width) * bookPercent) / 100);
+        if (bookFilled > 0) {
+            gfx.fillRect(left, bookY, bookFilled, 1, ui.color(ui::themes::ColorRole::Muted));
+        }
+
+        if (position.count == 0) {
+            // No chapters in this book: one bar is the honest answer.
+            return;
+        }
+        gfx.fillRect(left, chapterY, width, 2, ui.color(ui::themes::ColorRole::SurfaceMuted));
+        const int16_t chapterFilled =
+            static_cast<int16_t>((static_cast<int32_t>(width) * position.percentInChapter) / 100);
+        if (chapterFilled > 0) {
+            gfx.fillRect(left, chapterY, chapterFilled, 2, ui.color(ui::themes::ColorRole::Foreground));
+        }
+
+        if (pendingNotes > 0) {
+            // A note is recorded but not yet in the vault. Discreet on purpose: it is
+            // reassurance that nothing was lost, not something to act on while reading.
+            gfx.fillRect(static_cast<int16_t>(left + width - 3), static_cast<int16_t>(chapterY - 3), 3, 3,
+                         ui.color(ui::themes::ColorRole::Accent));
+        }
+
+        for (const size_t mark : noteMarks) {
+            if (mark < position.firstWord || mark >= position.lastWord) {
+                continue; // Belongs to another chapter's bar.
+            }
+            const int16_t x = reading::markOffset(width, mark, position.firstWord, position.lastWord);
+            gfx.fillRect(static_cast<int16_t>(left + x), static_cast<int16_t>(chapterY - 3), 2, 3,
+                         ui.color(ui::themes::ColorRole::Accent));
         }
     }
 

@@ -5,6 +5,7 @@
 #include <optional>
 #include <span>
 #include <utility>
+#include <vector>
 #include "board/BoardPower.h"
 #include "fonts/AlphaFont.h"
 #include "fonts/FontCatalog.h"
@@ -37,7 +38,19 @@ namespace screens {
         void loadInitialBook(ui::Context& ui, StorageManager& storage, Preferences& preferences, uint32_t nowMs);
         void draw(ui::Context& ui, const StorageManager& storage, const Board::Power::BatteryState& battery,
                   uint32_t nowMs);
+        // Set by the app: where this book was annotated, and whether anything is
+        // still waiting to be sent. Both are read every frame, so neither is looked up
+        // from the card here.
+        std::vector<size_t> noteMarks;
+        size_t pendingNotes = 0;
+
         bool batteryTapped(const ui::Touch& touch) const;
+
+    private:
+        // Chapter bar over book bar, with a tick per note taken in this chapter.
+        void drawProgressBars(ui::Context& ui, uint8_t bookPercent);
+
+    public:
         bool batteryLongPressed(const ui::Touch& touch) const;
         bool batteryTouched(const ui::Touch& touch) const;
         bool previousSentenceTapped(uint16_t x, uint16_t y) const;

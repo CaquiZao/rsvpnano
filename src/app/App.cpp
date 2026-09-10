@@ -24,6 +24,7 @@
 #include "update/OtaUpdater.h"
 #include "voice/BookAnchor.h"
 #include "voice/Tones.h"
+#include "voice/VoiceMarks.h"
 #include "voice/VoiceQueue.h"
 
 namespace {
@@ -97,6 +98,7 @@ void App::begin() {
     else
         focusScreen_.begin();
     readerScreen_.loadInitialBook(immediateUi_, storage_, prefs_, bootMs_);
+    refreshNoteMarks();
     Logger::startupCheckpoint("book");
     libraryScreen_.invalidate();
     ESP_LOGI("startup", "ready");
@@ -212,6 +214,8 @@ void App::renderScreen(uint32_t nowMs) {
             screens::status(immediateUi_, immediateUi_.text(UiText::FontSection), immediateUi_.text(UiText::Checking));
             return;
         }
+        // Cheap: the service keeps this counted so the reader never lists a directory.
+        readerScreen_.pendingNotes = voiceService_.pendingCount();
         immediateUi_.beginFrame(static_cast<uint8_t>(screen_));
         readerScreen_.draw(immediateUi_, storage_, battery_, nowMs);
         immediateUi_.endFrame();
@@ -653,6 +657,14 @@ void App::finishVoiceNote(uint32_t nowMs) {
 
     voice::play(failure != nullptr ? voice::Tone::Error : voice::Tone::Stop);
     if (failure == nullptr) {
+        // Record where this happened before the queue can delete the audio: the mark
+        // on the progress bar has to outlive the upload that removes the recording.
+        const auto& session = readerScreen_.session;
+        if (session.stored()) {
+            voice::appendMark(Board::Storage::filesystem(), voice::bookSlug(session.sourcePath()),
+                              session.state.wordIndex);
+            refreshNoteMarks();
+        }
         voiceService_.setCredentials(
             {settingsStore_.settings().network.ssid, settingsStore_.secrets().wifiPassword});
         voiceService_.requestFlush();
@@ -665,6 +677,16 @@ void App::finishVoiceNote(uint32_t nowMs) {
     std::snprintf(detail, sizeof(detail), "%lus na fila", static_cast<unsigned long>(seconds));
     showTransientStatus("Nota de voz", failure != nullptr ? failure : "Gravada", detail, 1200,
                         screens::Screen::Reader);
+}
+
+// Read once per book rather than per frame: the reader draws the marks every frame
+// and the card is shared with the recorder.
+void App::refreshNoteMarks() {
+    const auto& session = readerScreen_.session;
+    readerScreen_.noteMarks = session.stored()
+                                ? voice::loadMarks(Board::Storage::filesystem(),
+                                                   voice::bookSlug(session.sourcePath()))
+                                : std::vector<size_t>{};
 }
 
 void App::refreshVoiceNotes() {
@@ -772,6 +794,7 @@ void App::updateBackgroundJob() {
             const std::string_view bookName = book == nullptr ? std::string_view{} : BookLibrary::displayName(*book);
             if (jobBookLoaded_) {
                 readerScreen_.finishBookOpen(prefs_, millis());
+                refreshNoteMarks();
                 ReadingLoop::pause(readerScreen_.session);
                 typographyOpensBook_ = true;
                 screens::status(immediateUi_, immediateUi_.text(UiText::OpeningBook), bookName, {}, 85);
@@ -1012,6 +1035,7 @@ void App::exitUsbTransfer(screens::Screen destination) {
         readerScreen_.fonts.loadFromSd();
         focusScreen_.begin(*filesystem);
         readerScreen_.loadInitialBook(immediateUi_, storage_, prefs_, millis());
+        refreshNoteMarks();
     } else {
         focusScreen_.begin();
     }

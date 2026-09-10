@@ -87,6 +87,7 @@ private:
     void enterStandby(uint32_t nowMs);
     void exitStandby(uint32_t nowMs);
     void lightSleepFromStandby();
+    void refreshNoteMarks();
     void powerOff(uint32_t nowMs, const char* reason);
     static void renderStorageStatus(void* context, const char* title, const char* line1, const char* line2,
                                     int progressPercent);
