@@ -102,8 +102,12 @@ def test_a_recording_delivered_by_lan_does_not_come_back_as_a_second_note(tmp_pa
 
     worker.stop(timeout=10)
     assert len(notes_in(cfg)) == 1
-    # E a cópia no Drive não fica lá para sempre entupindo a listagem.
-    assert sorted(drive.deleted) == ["s1", "w1"]
+    # E a cópia no Drive fica onde está, de propósito: "já processado" é uma
+    # afirmação sobre o note_id, que colide entre boots (boot-%08lu reinicia em
+    # 0), então apagá-la aqui já destruiu uma gravação. Resíduo na pasta é o
+    # custo aceito -- a listagem é paginada e não esconde gravação nova por
+    # estar cheia.
+    assert drive.deleted == []
 
 
 def note_from_lan(tmp_path, wav, meta):

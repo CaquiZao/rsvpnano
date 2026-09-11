@@ -91,10 +91,13 @@ def test_files_that_are_neither_wav_nor_sidecar_are_ignored():
     assert plan_inbox(files, processed_ids=set(), now=NOW).ready == []
 
 
-def test_an_already_processed_pair_is_reported_for_deletion():
-    # Antes eram só ignorados, e a pasta os guardava para sempre. Com ~200
-    # itens desses a listagem satura e uma gravação nova deixa de aparecer,
-    # enquanto o device já recebeu 2xx e apagou a única cópia que tinha.
+def test_an_already_processed_pair_is_left_in_the_folder():
+    # Nem o áudio nem o sidecar de um note_id já processado são reportados para
+    # apagar. "Já processado" é uma afirmação sobre o note_id, e note_id colide
+    # (boot-%08lu reinicia em 0 a cada boot), então esses bytes podem ser de
+    # outra gravação -- apagar aí já destruiu uma. O que consertou a listagem
+    # entupida foi a paginação de list_inbox, não esta remoção; o resíduo fica
+    # na pasta, invisível ao poller e recuperável à mão.
     files = [
         RemoteFile("w1", "20260910-120000.wav", at(10)),
         RemoteFile("w2", "20260910-120000.wav", at(9)),
@@ -102,35 +105,41 @@ def test_an_already_processed_pair_is_reported_for_deletion():
     ]
     plan = plan_inbox(files, processed_ids={"20260910-120000"}, now=NOW)
     assert plan.ready == []
-    # O áudio sai por uma lista própria: "já processado" é uma afirmação sobre o
-    # note_id, e note_id colide (boot-%08lu reinicia em 0 a cada boot), então
-    # esses bytes podem ser de outra gravação e o chamador tem que garanti-los
-    # antes de apagar. O sidecar não carrega gravação nenhuma.
-    assert sorted(f.id for f in plan.stale_audio) == ["w1", "w2"]
-    assert [f.id for f in plan.stale_sidecars] == ["s1"]
+    assert plan.stale_sidecars == []
 
 
-def test_a_processed_wav_is_never_reported_as_a_bare_deletion():
+def test_a_processed_wav_keeps_the_sidecar_that_identifies_it():
     # Sem relógio sincronizado o stem é boot-%08lu: milissegundos desde o boot,
     # reiniciando em 0 a cada boot (src/voice/Clock.cpp). As gravações pré-sync
     # são exatamente as que caem para o Drive, então dois boots cunham o mesmo
-    # nome para gravações diferentes -- e este arquivo pode ser a segunda
-    # delas. Ele só pode ser apagado depois de os bytes estarem guardados.
+    # nome para gravações diferentes -- e este par pode ser a segunda delas,
+    # esperando resgate à mão. Sem o sidecar ao lado, quem abrir a pasta acha um
+    # boot-00042318.wav e nada que diga de quando ele é.
+    files = [
+        RemoteFile("w1", "boot-00042318.wav", at(10)),
+        RemoteFile("s1", "boot-00042318.json", at(10)),
+    ]
+    plan = plan_inbox(files, processed_ids={"boot-00042318"}, now=NOW)
+    assert plan.ready == []
+    assert plan.stale_sidecars == []
+
+
+def test_a_lone_processed_wav_is_never_reported_for_deletion():
     files = [RemoteFile("w1", "boot-00042318.wav", at(10))]
     plan = plan_inbox(files, processed_ids={"boot-00042318"}, now=NOW)
     assert plan.ready == []
-    assert [f.id for f in plan.stale_audio] == ["w1"]
     assert plan.stale_sidecars == []
 
 
 def test_an_orphan_sidecar_is_reported_for_deletion_after_the_grace_period():
-    # Um sidecar sem .wav nenhum não vira nota jamais: plan_inbox o pulava, e
-    # pular é o que enche a pasta.
+    # Um sidecar sem .wav nenhum não vira nota jamais, e passado o prazo
+    # nenhum .wav vai aparecer para casar com ele. Órfão de verdade: não
+    # carrega gravação, então sai da pasta -- ao contrário do sidecar que está
+    # ao lado do .wav de um note_id já processado, que fica.
     files = [RemoteFile("s1", "20260910-114000.json", at(20))]
     plan = plan_inbox(files, processed_ids=set(), now=NOW)
     assert plan.ready == []
     assert [f.id for f in plan.stale_sidecars] == ["s1"]
-    assert plan.stale_audio == []
 
 
 def test_an_orphan_sidecar_within_the_grace_period_is_left_alone():
@@ -140,7 +149,6 @@ def test_an_orphan_sidecar_within_the_grace_period_is_left_alone():
     plan = plan_inbox(files, processed_ids=set(), now=NOW)
     assert plan.ready == []
     assert plan.stale_sidecars == []
-    assert plan.stale_audio == []
 
 
 def test_a_hostile_file_name_cannot_escape_the_note_id():

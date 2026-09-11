@@ -42,25 +42,24 @@ class ReadyNote:
 @dataclass(frozen=True)
 class InboxPlan:
     ready: list[ReadyNote]
-    # Both lists are files nothing will ever read again, and which the caller
-    # must therefore get out of the folder: it does not drain by itself. A
-    # best-effort delete that failed, and an orphan sidecar that can never be
-    # paired, would otherwise sit in the listing forever -- and a listing full
-    # of them is how a new recording becomes invisible while the device has
-    # already dropped its only copy.
+    # Sidecars with no recording behind them: not one .wav in the folder shares
+    # their stem, so nothing will ever pair with them, and past the grace period
+    # nothing ever will. They carry no audio, so removing them destroys nothing
+    # -- the device's own queue sweeps its orphan sidecars the same way.
     #
-    # They are two lists because deleting them is not the same act. "Already
-    # processed" is a claim about the note_id, and the note_id is the device's
-    # file stem -- which is `boot-%08lu`, milliseconds since boot restarting at
-    # 0 on every boot, whenever the clock is not synced (src/voice/Clock.cpp).
-    # Pre-sync recordings are exactly the ones that queue for this fallback, so
-    # two boots can mint the same stem for two different recordings. A .wav
-    # here may therefore be a recording nobody has ever heard, and the caller
-    # must secure its bytes before removing it.
-    stale_audio: list[RemoteFile]
-    # A .json with no recording behind it: an orphan, or the sidecar of a
-    # note_id already delivered. It carries no audio, so there is nothing to
-    # secure -- the device's own queue sweeps its orphan sidecars the same way.
+    # The files of an already-processed note_id are NOT here, and this list is
+    # the only deletion this module asks for. "Already processed" is a claim
+    # about the note_id, and the note_id is the device's file stem -- which is
+    # `boot-%08lu`, milliseconds since boot restarting at 0 on every boot,
+    # whenever the clock is not synced (src/voice/Clock.cpp). Pre-sync
+    # recordings are exactly the ones that queue for this fallback, so two boots
+    # can mint the same stem for two different recordings, and a .wav under an
+    # already-processed stem may be a recording nobody has ever heard. Deleting
+    # on that basis destroyed one. They are skipped instead: invisible to the
+    # poller, left in the folder, recoverable by hand -- and harmless, because
+    # drive.py follows nextPageToken to exhaustion, so the folder is always
+    # listed in full and residue in it cannot hide a new recording. The accepted
+    # cost is that the residue accumulates and is listed on every poll.
     stale_sidecars: list[RemoteFile]
 
 
@@ -101,39 +100,37 @@ def plan_inbox(
         wavs_by_note.setdefault(note_id_of(f.name), []).append(f)
 
     ready: list[ReadyNote] = []
-    stale_audio: list[RemoteFile] = []
     stale_sidecars: list[RemoteFile] = []
     for note_id, wavs in wavs_by_note.items():
-        wavs.sort(key=lambda w: w.created_at)
-        sidecar = sidecars.get(note_id)
         if note_id in processed_ids:
             # This recording is already a note -- delivered by an earlier poll
             # whose delete failed, or by POST /v1/notes, which records into the
-            # same store. Skipping it (what this did before) left it in the
-            # folder for good; reporting it is what drains the folder. As audio,
-            # though: the stem may have collided with a recording from another
-            # boot, so these bytes are not certainly a copy of anything.
-            stale_audio.extend(wavs)
-            if sidecar is not None:
-                stale_sidecars.append(sidecar)
+            # same store. Skipped, and only skipped: the stem may belong to
+            # another boot's recording (see InboxPlan), so these bytes are not
+            # certainly a copy of anything, and the sidecar beside them is what
+            # would identify them if a hand ever has to. Both stay.
             continue
+        wavs.sort(key=lambda w: w.created_at)
         wav, *extra_copies = wavs
+        sidecar = sidecars.get(note_id)
         if sidecar is None and now - wav.created_at < grace:
             continue  # May be an upload in flight.
         ready.append(ReadyNote(note_id=note_id, wav=wav, sidecar=sidecar, extra_copies=extra_copies))
 
     for note_id, sidecar in sidecars.items():
         if note_id in wavs_by_note:
+            # Paired: either a note about to be delivered, or the metadata of an
+            # already-processed stem, which stays with its .wav so that a
+            # boot-00042318.wav awaiting manual recovery is not left nameless.
             continue
         # A sidecar with no .wav of its own is never going to become a note.
         # Inside the grace period it could still be the half of a pair whose
         # audio is mid-upload, and deleting it there would cost that note its
         # anchor -- so it only becomes stale once the deadline has passed.
-        if note_id not in processed_ids and now - sidecar.created_at < grace:
+        if now - sidecar.created_at < grace:
             continue
         stale_sidecars.append(sidecar)
 
     ready.sort(key=lambda r: r.wav.created_at)
-    stale_audio.sort(key=lambda f: f.created_at)
     stale_sidecars.sort(key=lambda f: f.created_at)
-    return InboxPlan(ready=ready, stale_audio=stale_audio, stale_sidecars=stale_sidecars)
+    return InboxPlan(ready=ready, stale_sidecars=stale_sidecars)
