@@ -117,6 +117,50 @@ No device, uma nota recusada é **estacionada** em vez de apagada: o `.wav` e o 
 ganham o sufixo `.parked` em `/voice` no cartão, ficam fora da fila e nunca são
 varridos. A tela diz "Bridge recusou a nota" em vez de contar a recusa como entrega.
 
+## Quando a transcrição falha
+
+Uma gravação que chegou e **não** virou nota não é perdida. O worker guarda o áudio em
+`<audio_store>/failed/` junto de um `<id>.json` com o meta que veio com ela, o motivo da
+falha e quantas tentativas já teve; no Telegram chega um aviso dizendo o que quebrou e
+que o áudio está guardado. A cada vez que o bridge sobe, essas gravações são as
+primeiras a entrar na fila — depois de três tentativas ele desiste, avisa, e o `.wav`
+continua lá.
+
+Isso existe porque uma nota real foi perdida assim. Uma gravação de 1m48s chegou pelo
+Drive, estourou a memória da GPU durante a transcrição, e o worker registrou a exceção
+e seguiu adiante: a nota nunca existiu, nada tentou de novo, e nada disse isso. A cópia
+no Drive já tinha sido apagada e o `note_id` já estava na lista de processados — o que
+está correto, é o que impede a mesma gravação virar duas notas, mas não deixava caminho
+de volta.
+
+Um detalhe que parece contramão e não é: o `note_id` continua sendo marcado como
+processado **antes** de a nota ser escrita. O `submit` só enfileira, então marcar depois
+não protegeria de nada — a falha acontece mais tarde, no worker — e a marcação é o que
+impede a nota duplicada. O que faltava era o caminho de volta, não a ordem.
+
+Por isso também tudo que vem depois de a nota estar em disco é engolido com um aviso no
+log, inclusive registrar a thread do Telegram: o worker trata uma exceção como "esta
+gravação não produziu nada" e a estaciona, e uma exceção depois da escrita voltaria como
+uma segunda nota para a mesma gravação.
+
+## Qual GPU transcreve
+
+O buffer que o backend Vulkan aloca cresce com a **duração** do áudio, então uma placa
+pequena transcreve um minuto e morre em dois — com um crash sem mensagem legível
+(`exit 3221225477`), não com um erro de memória. Nesta máquina:
+
+| Índice | Dispositivo | Memória |
+|---|---|---|
+| 0 | GeForce MX110 | 2.256 MB |
+| 1 | Intel UHD 620 | 6.212 MB |
+| 2 | CPU i7-8565U | 12.168 MB |
+
+`device_indexes` em `[asr]` é a ordem em que os dispositivos são tentados, caindo para o
+próximo quando um morre. Aqui é `[1, 2]`: a MX110 é a menor das três e fica fora. Um
+*timeout* não cai para o próximo — o dispositivo seguinte é mais lento, então só faria a
+mesma espera durar mais. `handy.exe --list-devices` lista os índices com a memória de
+cada um.
+
 ## Quando o bridge não está na rede
 
 O device tenta a LAN primeiro, sempre: só cai para o Google Drive quando nenhum bridge

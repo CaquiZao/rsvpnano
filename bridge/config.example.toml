@@ -6,6 +6,12 @@ port         = 8787
 handy_exe = "C:/Users/kakam/AppData/Local/Handy/handy.exe"
 model     = "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf"
 timeout_s = 900
+# Quais dispositivos tentar, em ordem, caindo para o proximo quando um
+# morre. Vazio (ou ausente) deixa o Handy escolher. Existe porque o buffer
+# que o backend Vulkan aloca cresce com a duracao do audio: uma GPU de 2GB
+# transcreve um minuto e estoura em dois. `handy.exe --list-devices` lista
+# os indices com a memoria de cada um.
+# device_indexes = [1, 2]
 
 [post_process]
 enabled = true

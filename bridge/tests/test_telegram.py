@@ -1,6 +1,12 @@
 import pytest
 
-from handy_bridge.telegram import TelegramError, TelegramSender, build_message
+from handy_bridge.telegram import (
+    MAX_MESSAGE_CHARS,
+    TelegramError,
+    TelegramSender,
+    build_failure,
+    build_message,
+)
 
 
 class FakeResponse:
@@ -183,3 +189,26 @@ def test_build_message_keeps_a_real_question():
 
     got = build_message("O que foi o Big Bang?", "O evento inicial.", None)
     assert got.startswith("❓ O que foi o Big Bang?")
+
+
+def test_failure_notice_says_what_broke_and_that_it_will_retry():
+    text = build_failure(
+        "boot-0004-00033920", "Handy failed with exit code 3221225477", 1, will_retry=True
+    )
+    assert "boot-0004-00033920" in text
+    assert "3221225477" in text
+    # The point of the message: the recording still exists.
+    assert "guardado" in text.lower()
+    assert "de novo" in text.lower()
+
+
+def test_failure_notice_stops_promising_a_retry_once_it_gave_up():
+    text = build_failure("boot-0004-00033920", "sem VRAM", 3, will_retry=False)
+    assert "de novo" not in text.lower()
+    assert "3" in text
+    assert "guardado" in text.lower()
+
+
+def test_failure_notice_trims_a_giant_reason():
+    text = build_failure("n1", "x" * 5000, 1, will_retry=True)
+    assert len(text) < MAX_MESSAGE_CHARS

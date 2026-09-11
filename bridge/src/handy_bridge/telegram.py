@@ -98,6 +98,38 @@ def build_arrival(
     return "\n".join(lines)
 
 
+MAX_REASON_CHARS = 300
+
+
+def build_failure(note_id: str, reason: str, attempts: int, will_retry: bool) -> str:
+    """Say that a recording arrived and did not become a note.
+
+    The message this replaces was a line in a log file nobody was reading, and
+    the note simply never appeared -- the same silence the whole voice path
+    started out with. What matters on the phone is that the audio still exists,
+    so that comes before the reason.
+    """
+    trimmed = reason.strip()
+    if len(trimmed) > MAX_REASON_CHARS:
+        trimmed = trimmed[:MAX_REASON_CHARS].rstrip() + "…"
+
+    lines = ["⚠️ Uma gravação chegou e não virou nota", "", f"🎙️ {note_id}"]
+    if trimmed:
+        lines.append(f"💥 {trimmed}")
+    lines.append("")
+    if will_retry:
+        lines.append(
+            f"O áudio está guardado (tentativa {attempts}). "
+            "Vou tentar de novo quando o bridge reiniciar."
+        )
+    else:
+        lines.append(
+            f"Desisti depois de {attempts} tentativas. O áudio está guardado na "
+            "pasta 'failed' do bridge — nada foi apagado."
+        )
+    return "\n".join(lines)
+
+
 def _default_poster(url: str, data: dict, timeout: int):
     return httpx.post(url, data=data, timeout=timeout)
 

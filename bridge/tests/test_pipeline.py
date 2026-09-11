@@ -616,3 +616,47 @@ def test_telegram_answer_still_shows_a_real_question(tmp_path):
     tg = RecordingTelegram()
     process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc, telegram=tg)
     assert "❓ O que foi o Big Bang?" in tg.sent[1]
+
+
+class BrokenThreads:
+    """A thread store whose disk is full, or whose json went unreadable."""
+
+    def remember(self, *args, **kwargs):
+        raise OSError("no space left on device")
+
+    def append(self, *args, **kwargs):
+        raise OSError("no space left on device")
+
+
+class CountingTelegram:
+    def __init__(self):
+        self.sent = 0
+
+    def send(self, text, reply_to=None):
+        self.sent += 1
+        return self.sent
+
+
+def test_a_broken_thread_store_does_not_undo_the_note(tmp_path):
+    """Everything after write_note is best-effort, and this is why it must be.
+
+    The worker parks whatever process_note raises and retries it later, so a
+    raise here -- after the note is already on disk -- would come back as a
+    second note for the same recording, with nothing in the vault to reconcile
+    the two.
+    """
+    cfg = make_cfg(tmp_path, pp_enabled=False)
+    incoming = IncomingNote(
+        "n1", make_wav(tmp_path / "n1.wav"), {"clock_synced": True, "recorded_at": "2026-09-07T14:32:11"}
+    )
+
+    path = process_note(
+        incoming,
+        cfg,
+        transcribe_fn=ok_transcribe(),
+        processor=None,
+        telegram=CountingTelegram(),
+        threads=BrokenThreads(),
+    )
+
+    assert path.exists()

@@ -18,6 +18,12 @@ class AsrConfig:
     handy_exe: Path
     model: str
     timeout_s: int
+    # Which compute devices to ask, in order, falling to the next when one dies.
+    # Empty means "let Handy choose", which is what it did before this existed.
+    # It matters because the buffer a Vulkan backend allocates grows with the
+    # recording's length: the 2GB GPU in this laptop transcribes a minute and
+    # crashes on two, while the iGPU and the CPU have room for both.
+    device_indexes: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -185,6 +191,7 @@ def load_config(path: Path) -> Config:
             handy_exe=Path(_require(asr_raw, "handy_exe", "[asr]")).expanduser(),
             model=_require(asr_raw, "model", "[asr]"),
             timeout_s=int(_require(asr_raw, "timeout_s", "[asr]")),
+            device_indexes=tuple(int(i) for i in asr_raw.get("device_indexes", ())),
         ),
         post_process=PostProcessConfig(
             enabled=bool(_require(pp_raw, "enabled", "[post_process]")),

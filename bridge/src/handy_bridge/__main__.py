@@ -103,6 +103,16 @@ def main(argv: list[str] | None = None) -> int:
     worker = NoteWorker(cfg, processor, telegram=telegram, threads=threads)
     worker.start()
 
+    # Before anything new arrives, so a recording that failed last time is the
+    # first thing tried rather than the last. This is the way back for a note
+    # whose transcription died: the copy on Drive is already gone and the
+    # note_id is already in the processed list, so nothing else would retry it.
+    recovered = worker.retry_parked()
+    if recovered:
+        logging.getLogger(__name__).info(
+            "%d gravação(ões) que falharam antes foram reenfileiradas", recovered
+        )
+
     drive_poller = None
     # One store for both entrances. A recording can arrive twice -- the Drive
     # upload confirms the WAV, fails on the sidecar, and the next flush finds

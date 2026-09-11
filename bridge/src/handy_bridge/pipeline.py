@@ -221,7 +221,7 @@ def process_note(
         # Seeded with the note itself, so a reply arrives with the content as
         # context instead of an empty history.
         if threads is not None and arrival_id:
-            threads.remember(arrival_id, note_path, "", body or raw_text)
+            _remember(threads, "remember", arrival_id, note_path, "", body or raw_text)
 
     if telegram is not None and answers:
         for answer in answers:
@@ -247,11 +247,30 @@ def process_note(
             # phone lands the follow-up in the right place.
             if threads is not None and message_id:
                 if arrival_id:
-                    threads.append(arrival_id, answer.question, answer.answer, message_id)
+                    _remember(
+                        threads, "append", arrival_id, answer.question, answer.answer, message_id
+                    )
                 else:
-                    threads.remember(message_id, note_path, answer.question, answer.answer)
+                    _remember(
+                        threads, "remember", message_id, note_path, answer.question, answer.answer
+                    )
 
     return note_path
+
+
+def _remember(threads: object, method: str, *args) -> None:
+    """Record a Telegram message against its note, or say why it could not.
+
+    Wrapped because of what happens above this line: the note is already on
+    disk, and the worker treats a raise from here as "this recording produced
+    nothing" and parks it for a retry -- which would write the note a second
+    time. Losing the ability to reply to a message costs a convenience; a
+    duplicated note costs trust in the vault.
+    """
+    try:
+        getattr(threads, method)(*args)
+    except Exception as exc:  # noqa: BLE001 - the thread store is a convenience
+        log.warning("could not record the Telegram thread (%s): %s", method, exc)
 
 
 def _update_board(
