@@ -8,7 +8,7 @@ firmware keeps them in planFrom() on the SD card, not in the uploader.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -32,11 +32,6 @@ class ReadyNote:
     note_id: str
     wav: RemoteFile
     sidecar: RemoteFile | None
-    # A retry after a failed sidecar re-uploads the .wav under a new file id,
-    # so the same stem can show up more than once in a single listing. These
-    # are the losers of that race: the caller must delete them, not turn them
-    # into notes of their own.
-    extra_copies: list[RemoteFile] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -110,12 +105,18 @@ def plan_inbox(
             # certainly a copy of anything, and the sidecar beside them is what
             # would identify them if a hand ever has to. Both stay.
             continue
-        wavs.sort(key=lambda w: w.created_at)
-        wav, *extra_copies = wavs
+        # The note is made from the oldest .wav of the stem. The others are
+        # left in the folder and are not reported: they look like the losers
+        # of a retry race, but the stem does not prove it -- boot 1 (wav up,
+        # sidecar failed) and boot 2 (a different recording at the same
+        # millisecond-since-boot) put two recordings under one name, and the
+        # newest was being deleted without ever being downloaded. On the next
+        # poll this stem is processed, and they are reported to the log.
+        wav = min(wavs, key=lambda w: w.created_at)
         sidecar = sidecars.get(note_id)
         if sidecar is None and now - wav.created_at < grace:
             continue  # May be an upload in flight.
-        ready.append(ReadyNote(note_id=note_id, wav=wav, sidecar=sidecar, extra_copies=extra_copies))
+        ready.append(ReadyNote(note_id=note_id, wav=wav, sidecar=sidecar))
 
     for note_id, sidecar in sidecars.items():
         if note_id in wavs_by_note:

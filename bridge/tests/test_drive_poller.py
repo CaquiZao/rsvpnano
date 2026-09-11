@@ -146,7 +146,14 @@ def test_the_state_file_records_the_note_id(tmp_path):
     assert json.loads(state_path.read_text(encoding="utf-8")) == ["20260910-120000"]
 
 
-def test_the_poller_deletes_extra_copies_along_with_the_wav_and_sidecar(tmp_path):
+def test_a_second_wav_under_the_same_stem_is_neither_downloaded_nor_deleted(tmp_path):
+    # Dois `.wav` com o mesmo stem eram tratados como retry da mesma gravação:
+    # o mais novo era apagado sem nunca ser baixado. Mas o stem é `boot-%08lu`
+    # sem relógio sincronizado, então boot 1 (wav subiu, sidecar falhou) e
+    # boot 2 (wav+json no mesmo ms-desde-boot) põem DUAS gravações diferentes
+    # sob um nome. A nota sai da mais antiga e a outra, que ninguém ouviu,
+    # era destruída sem cópia em lugar nenhum. Ela fica na pasta -- e o aviso
+    # de stem já processado a reporta no poll seguinte.
     cfg = make_cfg(tmp_path)
     files = [
         RemoteFile("w1", "20260910-120000.wav", NOW - timedelta(minutes=10)),
@@ -163,7 +170,10 @@ def test_the_poller_deletes_extra_copies_along_with_the_wav_and_sidecar(tmp_path
                          now=lambda: NOW)
 
     assert poller.poll_once() == 1
-    assert sorted(drive.deleted) == ["s1", "w1", "w2"]
+    # A nota entregue sai da pasta; a cópia extra não, e nem os bytes dela
+    # foram pedidos ao Drive.
+    assert sorted(drive.deleted) == ["s1", "w1"]
+    assert sorted(drive.downloaded) == ["s1", "w1"]
 
 
 def test_an_unparseable_sidecar_is_refused_the_way_the_lan_route_refuses_it(tmp_path):

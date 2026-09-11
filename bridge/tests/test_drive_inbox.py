@@ -56,18 +56,19 @@ def test_a_reuploaded_wav_with_a_new_file_id_is_not_offered_again():
 
 def test_two_wavs_sharing_a_stem_collapse_into_one_ready_note():
     # Um upload que falhou no sidecar e foi refeito deixa dois .wav com o
-    # mesmo stem e ids diferentes na pasta. Isso deve virar UMA nota, a
-    # partir do wav mais antigo; o outro é reportado como cópia extra para
-    # o chamador apagar -- não para virar uma segunda nota.
+    # mesmo stem e ids diferentes na pasta. Isso deve virar UMA nota, a partir
+    # do wav mais antigo -- e o outro NÃO é reportado para apagar: o stem não
+    # prova que é a mesma gravação (boot-%08lu reinicia em 0 a cada boot), e
+    # apagar sem baixar destruía uma gravação que ninguém nunca ouviu.
     files = [
         RemoteFile("w1", "20260910-120000.wav", at(10)),
         RemoteFile("w2", "20260910-120000.wav", at(1)),
         RemoteFile("s1", "20260910-120000.json", at(1)),
     ]
-    ready = plan_inbox(files, processed_ids=set(), now=NOW).ready
-    assert len(ready) == 1
-    assert ready[0].wav.id == "w1"
-    assert [f.id for f in ready[0].extra_copies] == ["w2"]
+    plan = plan_inbox(files, processed_ids=set(), now=NOW)
+    assert len(plan.ready) == 1
+    assert plan.ready[0].wav.id == "w1"
+    assert plan.stale_sidecars == []
 
 
 def test_a_sidecar_without_its_recording_is_never_a_note():

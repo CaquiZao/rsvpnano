@@ -188,8 +188,15 @@ class DrivePoller:
         self._purge(note)
 
     def _purge(self, note) -> None:
-        """Tira do Drive tudo que pertence a esta gravação."""
-        remote_ids = [note.wav.id, *(f.id for f in note.extra_copies)]
+        """Tira do Drive o áudio que virou esta nota, e o sidecar dele.
+
+        Só estes dois. Um segundo `.wav` com o mesmo stem já foi apagado aqui
+        como cópia perdida de um retry -- sem nunca ser baixado --, e o stem
+        não sustenta essa leitura: sem relógio sincronizado ele é `boot-%08lu`
+        e dois boots cunham o mesmo nome, então o arquivo apagado podia ser
+        outra gravação, que ninguém ouviu e da qual não sobrou cópia.
+        """
+        remote_ids = [note.wav.id]
         if note.sidecar is not None:
             remote_ids.append(note.sidecar.id)
         for remote_id in remote_ids:
