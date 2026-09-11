@@ -106,3 +106,54 @@ def test_poll_passes_the_offset_so_updates_are_not_reprocessed():
     TelegramSender("t", "c", poster=poster).poll(offset=99)
     assert seen["offset"] == 99
     assert seen["url"].endswith("/getUpdates")
+
+
+# --- aviso de chegada -------------------------------------------------------
+
+
+def test_build_arrival_names_the_kind_and_the_title():
+    from handy_bridge.telegram import build_arrival
+
+    got = build_arrival("recall", "Tres revolucoes", "corpo limpo", "o que eu falei")
+    assert got.startswith("🔁 Recall — Tres revolucoes")
+    assert "corpo limpo" in got
+    assert "o que eu falei" in got
+
+
+def test_build_arrival_puts_the_raw_transcript_after_the_substance():
+    from handy_bridge.telegram import build_arrival
+
+    got = build_arrival("anotação", "T", "CORPO", "FALADO")
+    # A transcricao e referencia: vem depois do que foi trabalhado, como na nota.
+    assert got.index("CORPO") < got.index("FALADO")
+
+
+def test_build_arrival_carries_the_recall_discussion():
+    from handy_bridge.telegram import build_arrival
+
+    got = build_arrival(
+        "recall", "T", "corpo", "falado",
+        reasoning="Seu instinto acertou a aceleracao.",
+        deepening="A Belle Epoque foi o apice.",
+    )
+    assert "Seu instinto acertou" in got
+    assert "Belle Epoque" in got
+
+
+def test_build_arrival_cuts_a_long_transcript_and_says_so():
+    from handy_bridge.telegram import MAX_TRANSCRIPT_CHARS, build_arrival
+
+    got = build_arrival("anotação", "T", "corpo", "x" * (MAX_TRANSCRIPT_CHARS + 500))
+    assert "transcrição cortada" in got
+    assert len(got) < MAX_TRANSCRIPT_CHARS + 400
+
+
+def test_build_arrival_warns_that_answers_are_coming():
+    from handy_bridge.telegram import build_arrival
+
+    um = build_arrival("pergunta", "T", "c", "f", answers_coming=1)
+    dois = build_arrival("pergunta", "T", "c", "f", answers_coming=2)
+    assert "1 resposta chegando" in um
+    assert "2 respostas chegando" in dois
+    # Sem resposta a caminho, nada de promessa que nao se cumpre.
+    assert "chegando" not in build_arrival("anotação", "T", "c", "f")

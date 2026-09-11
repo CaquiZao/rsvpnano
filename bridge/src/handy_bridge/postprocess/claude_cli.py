@@ -138,12 +138,17 @@ BOOK_SUMMARY_PROMPT = (
 )
 
 FOLLOWUP_PROMPT = (
-    "Você está esclarecendo uma dúvida de alguém que está lendo um livro e que "
-    "achou a resposta anterior insuficiente. "
+    "Alguém está lendo um livro e registra notas de voz. Abaixo vem uma nota dele e, "
+    "quando houver, as perguntas e respostas que já trocaram sobre ela. Responda à "
+    "pergunta nova.\n"
     "Responda APENAS com um objeto JSON válido, sem cercas de código, no formato "
     '{"answer": string}.\n'
+    "A pergunta pode ser duas coisas diferentes, e as duas são legítimas: pedir que "
+    "você esclareça uma resposta anterior que ficou insuficiente, ou uma pergunta nova "
+    "sobre a própria nota, feita horas ou dias depois. Não presuma que a pessoa está "
+    "reclamando de algo: atenda o que ela perguntou.\n"
     "A resposta deve ter NO MÁXIMO 150 palavras, ser direta e atacar exatamente o que "
-    "ficou obscuro. Não repita o que já foi dito antes. Não comece com introduções. "
+    "foi perguntado. Não repita o que já foi dito antes. Não comece com introduções. "
     "Se não souber com segurança, diga isso em uma frase em vez de especular.\n"
 )
 
@@ -400,7 +405,12 @@ class ClaudeCliProcessor:
         if history:
             parts.append("\nConversa até agora:\n")
             for asked, replied in history:
-                parts.append(f"P: {asked}\nR: {replied}\n")
+                # Uma entrada sem pergunta é a própria nota, semeada quando o aviso
+                # de chegada foi enviado -- não uma resposta que alguém deu.
+                if asked.strip():
+                    parts.append(f"P: {asked}\nR: {replied}\n")
+                else:
+                    parts.append(f"A nota diz:\n{replied}\n")
         parts.append(f"\nNova pergunta:\n{question}\n")
 
         payload = self._run("".join(parts))

@@ -423,3 +423,33 @@ def test_check_recall_drops_the_factual_check_when_the_passage_does_not_cover_it
     assert got.missed == []
     assert got.reasoning
     assert got.deepening
+
+
+def test_followup_treats_a_seeded_note_as_context_not_as_an_answer():
+    # O aviso de chegada semeia o historico com a nota e pergunta vazia. Renderizar
+    # isso como "P: / R:" faria o modelo achar que alguem respondeu algo.
+    seen = {}
+
+    def runner(cmd, timeout):
+        seen["prompt"] = cmd[2]
+        return FakeCompleted(wrapper('{"answer": "ok"}'))
+
+    ClaudeCliProcessor("m", runner=runner).answer_followup(
+        "por que isso importa?", [("", "o corpo da nota")], None
+    )
+    assert "A nota diz:" in seen["prompt"]
+    assert "P: \nR:" not in seen["prompt"]
+
+
+def test_followup_still_renders_a_real_exchange_as_question_and_answer():
+    seen = {}
+
+    def runner(cmd, timeout):
+        seen["prompt"] = cmd[2]
+        return FakeCompleted(wrapper('{"answer": "ok"}'))
+
+    ClaudeCliProcessor("m", runner=runner).answer_followup(
+        "e depois?", [("o que foi?", "foi assim")], None
+    )
+    assert "P: o que foi?" in seen["prompt"]
+    assert "R: foi assim" in seen["prompt"]

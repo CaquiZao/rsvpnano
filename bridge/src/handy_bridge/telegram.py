@@ -32,6 +32,59 @@ def build_message(question: str, answer: str, book: str | None) -> str:
     return "\n".join(lines)
 
 
+# One line per kind, because "chegou uma nota" says less than the phone screen
+# has room for. The label is also what tells you whether to wait for more.
+KIND_HEADERS = {
+    "anotação": "📝 Anotação",
+    "pergunta": "❓ Pergunta",
+    "recall": "🔁 Recall",
+}
+# A ten-minute recording is a wall of text on a phone. The note keeps the whole
+# transcript; this message only has to be enough to recognise which note it is.
+MAX_TRANSCRIPT_CHARS = 900
+
+
+def build_arrival(
+    kind: str,
+    title: str,
+    body: str,
+    transcript: str,
+    book: str | None = None,
+    reasoning: str = "",
+    deepening: str = "",
+    answers_coming: int = 0,
+) -> str:
+    """Announce a note that just landed in the vault, with what it says.
+
+    Ordered for a phone: what it is, then the substance, then what you actually
+    said. The raw transcript goes last because it is reference -- you read it when
+    the cleaned version looks wrong, which is the same reason the note keeps it in
+    a collapsed callout rather than up front.
+    """
+    header = KIND_HEADERS.get(kind.strip().lower(), "📝 Nota")
+    lines = [f"{header} — {title.strip()}" if title.strip() else header, ""]
+
+    if body.strip():
+        lines += [body.strip(), ""]
+    for label, text in (("🧠 Seu raciocínio", reasoning), ("💡 Indo mais fundo", deepening)):
+        if text.strip():
+            lines += [f"{label}: {text.strip()}", ""]
+
+    spoken = transcript.strip()
+    if spoken:
+        if len(spoken) > MAX_TRANSCRIPT_CHARS:
+            spoken = spoken[:MAX_TRANSCRIPT_CHARS].rstrip() + "… (transcrição cortada)"
+        lines += [f"🎙️ {spoken}", ""]
+
+    if book:
+        lines.append(f"📖 {book}")
+    if answers_coming:
+        plural = "s" if answers_coming > 1 else ""
+        lines.append(f"⏳ {answers_coming} resposta{plural} chegando em seguida.")
+    lines.append(WARNING)
+    return "\n".join(lines)
+
+
 def _default_poster(url: str, data: dict, timeout: int):
     return httpx.post(url, data=data, timeout=timeout)
 

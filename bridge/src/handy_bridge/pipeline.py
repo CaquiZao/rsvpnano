@@ -22,7 +22,7 @@ from handy_bridge.postprocess import (
     RecallCheck,
     Task,
 )
-from handy_bridge.telegram import build_message
+from handy_bridge.telegram import build_arrival, build_message
 from handy_bridge.transcriber import Transcription
 from handy_bridge.transcriber import transcribe as default_transcribe
 
@@ -199,17 +199,50 @@ def process_note(
         except (kanban.KanbanError, OSError) as exc:
             log.warning("could not update the Kanban board for %s: %s", incoming.note_id, exc)
 
+    arrival_id = 0
+    if telegram is not None:
+        # Sent for every note, including a plain anotação that has no answer to
+        # deliver. That is the point: without it, most notes never appear on the
+        # phone, and a note you cannot see is a note you cannot ask about later.
+        try:
+            arrival_id = telegram.send(
+                build_arrival(
+                    note_kind,
+                    title,
+                    body,
+                    raw_text,
+                    book,
+                    recall.reasoning,
+                    recall.deepening,
+                    len(answers),
+                )
+            )
+        except Exception as exc:
+            log.warning("could not announce %s over Telegram: %s", incoming.note_id, exc)
+        # Seeded with the note itself, so a reply arrives with the content as
+        # context instead of an empty history.
+        if threads is not None and arrival_id:
+            threads.remember(arrival_id, note_path, "", body or raw_text)
+
     if telegram is not None and answers:
         for answer in answers:
             try:
-                message_id = telegram.send(build_message(answer.question, answer.answer, book))
+                # Threaded under the arrival, so the phone nests them together and
+                # the order on screen matches the order things happened.
+                message_id = telegram.send(
+                    build_message(answer.question, answer.answer, book),
+                    reply_to=arrival_id or None,
+                )
             except Exception as exc:
                 log.warning("could not deliver an answer over Telegram: %s", exc)
                 continue
             # Remember which note this message belongs to, so replying to it on the
             # phone lands the follow-up in the right place.
             if threads is not None and message_id:
-                threads.remember(message_id, note_path, answer.question, answer.answer)
+                if arrival_id:
+                    threads.append(arrival_id, answer.question, answer.answer, message_id)
+                else:
+                    threads.remember(message_id, note_path, answer.question, answer.answer)
 
     return note_path
 

@@ -357,6 +357,30 @@ para `Geral/Quadro.md`. Cada cartão linka de volta para a nota, então o contex
 se perde. O formato do arquivo foi extraído do código do plugin obsidian-kanban
 2.0.51, e a inserção é por linha — o bloco `%% kanban:settings` nunca é tocado.
 
+## O Telegram como registro do que chegou
+
+Toda nota que entra no vault é anunciada no seu Telegram — inclusive uma anotação simples,
+sem pergunta nenhuma. A mensagem diz o tipo, o título, o corpo limpo, a transcrição do que
+você falou e, num recall, a avaliação do raciocínio e o aprofundamento.
+
+Anunciar **toda** nota não é barulho, é o que torna o resto possível: o bridge lembra a
+qual nota cada mensagem pertence, e responder qualquer mensagem da conversa é fazer uma
+pergunta sobre aquela nota. Antes, o bot só falava quando havia resposta a entregar, então
+a maioria das notas nunca aparecia no celular — e uma nota que você não vê é uma nota
+sobre a qual você não consegue perguntar depois.
+
+A transcrição crua vem **depois** do conteúdo trabalhado, pela mesma razão que na nota ela
+fica num callout recolhido: é referência, que você lê quando a versão limpa parece errada.
+Transcrição longa é cortada, com aviso — a nota guarda a íntegra, e esta mensagem só
+precisa ser suficiente para você reconhecer de qual nota se trata.
+
+As respostas chegam **em seguida**, aninhadas sob o aviso, para a ordem na tela bater com
+a ordem em que as coisas aconteceram.
+
+A pergunta que você faz respondendo uma mensagem pode ser das duas coisas, e as duas
+valem: pedir que o bot esclareça uma resposta que ficou insuficiente, ou uma pergunta nova
+sobre a própria nota, feita dias depois.
+
 ## Respostas automáticas no Telegram
 
 Quando uma pendência é uma dúvida conceitual respondível de imediato, o bridge responde

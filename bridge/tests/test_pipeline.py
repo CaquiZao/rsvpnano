@@ -253,13 +253,15 @@ class RichProcessor:
 class RecordingTelegram:
     def __init__(self, error=None):
         self.sent = []
+        self.replies = []
         self.error = error
 
-    def send(self, text):
+    def send(self, text, reply_to=None):
         if self.error:
             raise self.error
         self.sent.append(text)
-        return 1
+        self.replies.append(reply_to)
+        return len(self.sent)
 
 
 def cfg_with(tmp_path, *, kanban_on=True):
@@ -395,9 +397,14 @@ def test_telegram_receives_the_answer(tmp_path):
     )
     tg = RecordingTelegram()
     process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc, telegram=tg)
-    assert len(tg.sent) == 1
-    assert "O que foi o Big Bang?" in tg.sent[0]
-    assert "O evento inicial." in tg.sent[0]
+    # Duas mensagens agora: o aviso de chegada primeiro, a resposta depois.
+    assert len(tg.sent) == 2
+    assert tg.sent[0].startswith("📝") or tg.sent[0].startswith("❓") or tg.sent[0].startswith("🔁")
+    assert "O que foi o Big Bang?" in tg.sent[1]
+    assert "O evento inicial." in tg.sent[1]
+    # E a resposta vem aninhada sob o aviso, para a ordem na tela bater com a real.
+    assert tg.replies[0] is None
+    assert tg.replies[1] == 1
 
 
 def test_telegram_failure_still_writes_the_note(tmp_path):
@@ -412,12 +419,17 @@ def test_telegram_failure_still_writes_the_note(tmp_path):
     assert "[!question] q" in path.read_text(encoding="utf-8")
 
 
-def test_telegram_not_called_when_there_is_nothing_answered(tmp_path):
+def test_telegram_announces_a_note_even_with_nothing_answered(tmp_path):
+    # Antes o bot ficava calado quando nao havia resposta a entregar, e a maioria
+    # das notas nunca aparecia no celular -- uma nota que voce nao ve e uma nota
+    # sobre a qual voce nao consegue perguntar depois.
     cfg = cfg_with(tmp_path)
     proc = RichProcessor(PPR("T", [], "C", tasks=[Task("x", "inferred", False)]))
     tg = RecordingTelegram()
     process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc, telegram=tg)
-    assert tg.sent == []
+    assert len(tg.sent) == 1
+    assert "T" in tg.sent[0]
+    assert tg.replies == [None]
 
 
 # --- layout por livro e resolucao de capitulo -------------------------------
