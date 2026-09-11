@@ -91,6 +91,22 @@ namespace voice {
         return lastError_;
     }
 
+    uint32_t Service::flushGeneration() const {
+        return flushes_;
+    }
+
+    size_t Service::lastSentCount() const {
+        return lastSent_;
+    }
+
+    // Last thing a finished flush does, and the only place the generation moves: the
+    // count is published before the generation so a reader that sees the new
+    // generation cannot read the old count.
+    void Service::finish(size_t sent) {
+        lastSent_ = sent;
+        ++flushes_;
+    }
+
     void Service::taskEntry(void* self) {
         static_cast<Service*>(self)->run();
     }
@@ -234,6 +250,7 @@ namespace voice {
             ESP_LOGI(kTag, "drive flush sent %u of %u, %u refused, %u still queued",
                      static_cast<unsigned>(sent), static_cast<unsigned>(items.size()),
                      static_cast<unsigned>(refused), static_cast<unsigned>(pendingCount_));
+            finish(sent);
             return;
         }
 
@@ -273,6 +290,7 @@ namespace voice {
         ESP_LOGI(kTag, "flush sent %u of %u, %u refused, %u still queued", static_cast<unsigned>(sent),
                  static_cast<unsigned>(items.size()), static_cast<unsigned>(refused),
                  static_cast<unsigned>(pendingCount_));
+        finish(sent);
     }
 
 } // namespace voice

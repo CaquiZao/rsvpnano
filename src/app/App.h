@@ -119,6 +119,10 @@ private:
     voice::Recorder voiceRecorder_;
     voice::Player voicePlayer_;
     screens::VoiceNotesModel voiceNotes_;
+    // Which flush the notes screen has already reacted to. A counter rather than a
+    // busy-flag edge: a flush that starts and finishes between two frames would slip
+    // past an edge, and the list would stay stale until the screen was reopened.
+    uint32_t voiceFlushSeen_ = 0;
     voice::Service voiceService_;
     screens::Screen screenBeforeVoice_ = screens::Screen::Reader;
     CompanionSerial serialCompanion_{companionApi_, usbTransfer_};

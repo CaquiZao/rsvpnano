@@ -240,9 +240,25 @@ void App::renderScreen(uint32_t nowMs) {
         standbyScreen_.draw(immediateUi_);
         return;
     case screens::Screen::VoiceNotes: {
+        // The list comes off the card and only used to be read when the screen was
+        // opened, so a flush finishing while it was open left it showing a note that
+        // had already been delivered -- and the send button doing nothing, because the
+        // queue behind it was empty. Re-read it when a flush ends, and say what went.
+        const uint32_t flushes = voiceService_.flushGeneration();
+        if (flushes != voiceFlushSeen_) {
+            voiceFlushSeen_ = flushes;
+            refreshVoiceNotes();
+            voiceNotes_.notice = screens::sentNotice(voiceService_.lastSentCount());
+        }
+
         immediateUi_.beginFrame(static_cast<uint8_t>(screen_));
         voiceNotes_.busy = voiceService_.busy();
         voiceNotes_.playing = voicePlayer_.active();
+        // Read every frame, like busy: an upload that fails while the screen is open
+        // used to keep the header saying "Notas de voz" until the screen was left and
+        // opened again.
+        voiceNotes_.error =
+            voicePlayer_.error() != nullptr ? voicePlayer_.error() : voiceService_.lastError();
         const screens::Action result = voiceNotesScreen_.draw(immediateUi_, voiceNotes_, nowMs, screen_);
         immediateUi_.endFrame();
         handleScreenAction(result, nowMs);
@@ -708,6 +724,7 @@ void App::refreshNoteMarks() {
 void App::refreshVoiceNotes() {
     const size_t selected = voiceNotes_.selected;
     voiceNotes_.rows.clear();
+    voiceNotes_.notice.clear();
     // Read straight from the card rather than from a cache: this screen is opened
     // rarely, and a stale list here is exactly what would stop the user trusting it.
     for (const auto& entry : voice::queue::pending(Board::Storage::filesystem())) {

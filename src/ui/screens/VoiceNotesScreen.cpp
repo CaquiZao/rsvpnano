@@ -63,6 +63,16 @@ namespace screens {
         return buffer;
     }
 
+    std::string sentNotice(size_t sent) {
+        if (sent == 0) {
+            return {};
+        }
+        char buffer[32] = {};
+        std::snprintf(buffer, sizeof(buffer), sent == 1 ? "%lu nota enviada" : "%lu notas enviadas",
+                      static_cast<unsigned long>(sent));
+        return buffer;
+    }
+
     ui::Rect listViewport(const ui::Rect& content) {
         const int16_t buttonsTop = static_cast<int16_t>(content.y + content.h - kButtonHeight);
         const int16_t top = static_cast<int16_t>(content.y + kHeaderHeight + kGap);
@@ -88,10 +98,19 @@ namespace screens {
         std::snprintf(position, sizeof(position), "%u / %u",
                       static_cast<unsigned>(model.rows.empty() ? 0 : model.selected + 1),
                       static_cast<unsigned>(model.rows.size()));
-        ui.label({content.x, content.y, static_cast<int16_t>(content.w - 90), kHeaderHeight},
-                 model.error != nullptr ? model.error : "Notas de voz", 2,
-                 model.error != nullptr ? ui::themes::ColorRole::Accent : ui::themes::ColorRole::Foreground,
-                 ui::TextAlign::Start);
+        // Error first: a flush where two of three notes went through sets both the
+        // error and the notice, and "2 notas enviadas" would bury the one that did not.
+        const char* headline = "Notas de voz";
+        ui::themes::ColorRole headlineColor = ui::themes::ColorRole::Foreground;
+        if (model.error != nullptr) {
+            headline = model.error;
+            headlineColor = ui::themes::ColorRole::Accent;
+        } else if (!model.notice.empty()) {
+            headline = model.notice.c_str();
+            headlineColor = ui::themes::ColorRole::Accent;
+        }
+        ui.label({content.x, content.y, static_cast<int16_t>(content.w - 90), kHeaderHeight}, headline, 2,
+                 headlineColor, ui::TextAlign::Start);
         ui.label({static_cast<int16_t>(content.x + content.w - 90), content.y, 90, kHeaderHeight}, position, 1,
                  ui::themes::ColorRole::Muted, ui::TextAlign::Right);
 
