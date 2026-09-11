@@ -393,3 +393,33 @@ def test_the_chapter_summary_prompt_demands_second_person():
     # O resumo saiu falando "a pessoa" e "ela"; num caderno pessoal isso le errado.
     assert "SEGUNDA PESSOA" in CHAPTER_SUMMARY_PROMPT
     assert "NUNCA na terceira pessoa" in CHAPTER_SUMMARY_PROMPT
+
+
+def test_check_recall_parses_the_reasoning_and_the_deepening():
+    inner = (
+        '{"points": [], "missed": [], "outside_passage": false,'
+        ' "reasoning": "Seu instinto acertou a aceleracao, errou o inicio.",'
+        ' "deepening": "A Belle Epoque foi o apice, nao a largada."}'
+    )
+    got = _processor(inner).check_recall("o que eu pensei", "trecho do livro")
+    assert got.reasoning.startswith("Seu instinto acertou")
+    assert "apice" in got.deepening
+    assert got.outside_passage is False
+    # A secao existe mesmo sem conferencia factual: e o que o usuario pediu.
+    assert bool(got) is True
+
+
+def test_check_recall_drops_the_factual_check_when_the_passage_does_not_cover_it():
+    # Imposto no codigo, nao confiado ao modelo: conferir memoria contra um texto
+    # que nao trata do assunto so produz acusacao falsa.
+    inner = (
+        '{"points": [{"said":"A revolucao cientifica foi em 1900","actual":"Foi ha 500 anos",'
+        '"correct":false}], "missed": ["algo do trecho"], "outside_passage": true,'
+        ' "reasoning": "Voce confundiu o inicio com o apice.", "deepening": "Mais contexto."}'
+    )
+    got = _processor(inner).check_recall("falei das tres revolucoes", "trecho sobre a Africa")
+    assert got.outside_passage is True
+    assert got.points == []
+    assert got.missed == []
+    assert got.reasoning
+    assert got.deepening

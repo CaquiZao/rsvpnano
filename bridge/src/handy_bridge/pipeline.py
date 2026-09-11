@@ -179,6 +179,9 @@ def process_note(
             answers=[(a.question, a.answer) for a in answers],
             recall_points=[(p.said, p.actual, p.correct) for p in recall.points],
             recall_missed=list(recall.missed),
+            recall_reasoning=recall.reasoning,
+            recall_deepening=recall.deepening,
+            recall_outside=recall.outside_passage,
         ),
     )
 

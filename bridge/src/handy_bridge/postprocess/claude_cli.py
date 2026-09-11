@@ -70,22 +70,42 @@ ANSWER_PROMPT = (
 )
 
 RECALL_PROMPT = (
-    "Alguém está lendo um livro e acabou de falar em voz alta o que entendeu, para "
-    "conferir se entendeu e se lembrou certo. Compare o que a pessoa disse com o "
-    "trecho do livro que ela leu.\n"
+    "Alguém está lendo um livro, parou e falou em voz alta o que lembrou e o que pensou. "
+    "Sua tarefa tem TRÊS PARTES, com REGRAS DE CONHECIMENTO DIFERENTES. Não misture as "
+    "regras entre as partes.\n"
     "Responda APENAS com um objeto JSON válido, sem cercas de código, no formato "
     '{"points": array de {"said": string, "actual": string, "correct": boolean}, '
-    '"missed": array de strings}.\n'
-    '"points" tem uma entrada por afirmação que a pessoa fez. "said" resume a '
-    'afirmação dela em uma frase curta. "correct" é true quando a afirmação bate com '
-    'o trecho. Quando "correct" é false, "actual" diz em uma frase o que o trecho '
-    'de fato afirma; quando é true, deixe "actual" vazio.\n'
-    '"missed" lista o que o trecho traz de importante e a pessoa não mencionou, no '
-    "máximo três itens, cada um em uma frase curta.\n"
-    "Julgue apenas contra o trecho fornecido, nunca contra conhecimento externo: se "
-    "o trecho não permite decidir, trate a afirmação como correta. Acusar erro que "
-    "não houve é pior que deixar passar, porque a pessoa para de confiar na "
-    "conferência.\n"
+    '"missed": array de strings, "reasoning": string, "deepening": string, '
+    '"outside_passage": boolean}.\n'
+    "\n"
+    "PARTE 1 - CONFERENCIA DA MEMORIA (\"points\" e \"missed\").\n"
+    'Uma entrada em "points" por afirmação factual que a pessoa fez sobre o texto. "said" '
+    'resume a afirmação em uma frase curta. "correct" é true quando ela bate com o trecho. '
+    'Quando é false, "actual" diz em uma frase o que o trecho de fato afirma; quando é true, '
+    'deixe "actual" vazio. "missed" lista no máximo três coisas importantes do trecho que a '
+    "pessoa não mencionou.\n"
+    "AQUI, JULGUE SOMENTE CONTRA O TRECHO FORNECIDO, nunca contra conhecimento externo. Se o "
+    "trecho não permite decidir, trate a afirmação como correta. Acusar erro que não houve é "
+    "pior que deixar passar, porque é o que faz a pessoa parar de confiar na conferência.\n"
+    "\n"
+    "PARTE 2 - AVALIACAO DO RACIOCINIO (\"reasoning\").\n"
+    "Avalie o PROCESSO DE PENSAMENTO, não a memória: a inferência se sustenta? onde ela "
+    "escorrega, e POR QUÊ? Quando a pessoa errou, diga primeiro o que o instinto dela "
+    "acertou e só depois onde ele falhou - quase sempre há um acerto dentro do erro, e é ele "
+    "que faz a correção grudar. Se ela confundiu duas coisas parecidas, nomeie a distinção "
+    "que resolve a confusão. Escreva em segunda pessoa. No máximo 130 palavras.\n"
+    "\n"
+    "PARTE 3 - APROFUNDAMENTO (\"deepening\").\n"
+    "Estenda o que a pessoa falou: de três a cinco frases com o que ela ficaria feliz de "
+    "saber em seguida, no fio que ela mesma puxou. AQUI conhecimento de mundo é permitido e "
+    "esperado - é o que torna esta parte útil. Não repita a Parte 2 nem a conferência. "
+    "Escreva em segunda pessoa. No máximo 130 palavras.\n"
+    "\n"
+    'QUANDO O TRECHO NAO COBRE O ASSUNTO: ponha "outside_passage" como true e deixe "points" '
+    'e "missed" VAZIOS. Isso acontece quando a pessoa recorda algo que leu antes, ou a '
+    "moldura geral do livro, e não o trecho atual. Conferir memória contra um texto que não "
+    "trata do assunto só produz acusação falsa. As Partes 2 e 3 continuam valendo "
+    "normalmente: é justamente aí que elas passam a ser o valor inteiro da conferência.\n"
 )
 
 CHAPTER_SUMMARY_PROMPT = (
@@ -335,7 +355,18 @@ class ClaudeCliProcessor:
             for item in (payload.get("missed") or [])
             if str(item).strip()
         ]
-        return RecallCheck(points=points, missed=missed[:3])
+        # Fora do trecho a conferencia factual nao tem contra o que julgar: o modelo
+        # foi instruido a esvazia-la, e aqui isso e imposto em vez de pedido.
+        outside = bool(payload.get("outside_passage", False))
+        if outside:
+            points, missed = [], []
+        return RecallCheck(
+            points=points,
+            missed=missed[:3],
+            reasoning=str(payload.get("reasoning", "")).strip(),
+            deepening=str(payload.get("deepening", "")).strip(),
+            outside_passage=outside,
+        )
 
     def summarize_chapter(self, entries: list[str]) -> str:
         """Write the chapter synthesis from the recorded lines, in one call."""
