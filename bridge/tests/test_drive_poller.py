@@ -1,4 +1,5 @@
 import json
+import logging
 import struct
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -280,6 +281,67 @@ def test_a_processed_wav_is_neither_downloaded_nor_deleted(tmp_path):
     assert drive.deleted == []
     # E nada foi escrito em disco: nem nota, nem cópia em rejected/.
     assert list(cfg.audio_store.glob("**/*")) == []
+
+
+def test_a_processed_stem_still_in_the_folder_is_named_in_the_log(tmp_path, caplog):
+    # Deixar o arquivo na pasta só é "recuperável à mão" se alguém souber que
+    # ele está lá. O device já apagou a cópia dele (DriveResult::Sent ->
+    # QueueAction::Delete), então este `.wav` pode ser a última cópia da
+    # gravação em qualquer lugar -- e sem linha de log os documentos ensinavam
+    # a esvaziar a pasta, que é destruí-la.
+    cfg = make_cfg(tmp_path)
+    files = [
+        RemoteFile("w1", "boot-00042318.wav", NOW - timedelta(minutes=10)),
+        RemoteFile("s1", "boot-00042318.json", NOW - timedelta(minutes=10)),
+    ]
+    drive = FakeDrive(files, {"w1": wav_bytes(3), "s1": b"{}"})
+    state = ProcessedIds(tmp_path / "seen.json")
+    state.add("boot-00042318")
+    submitted = []
+    poller = DrivePoller(cfg, drive, submitted.append, state, now=lambda: NOW)
+
+    with caplog.at_level(logging.WARNING):
+        assert poller.poll_once() == 0
+
+    assert submitted == []
+    assert drive.deleted == []
+    assert drive.downloaded == []
+    avisos = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(avisos) == 1
+    assert "boot-00042318" in avisos[0]
+
+
+def test_the_extra_copy_left_in_the_folder_is_named_in_the_log_on_the_next_poll(tmp_path, caplog):
+    # O `.wav` extra do mesmo stem não é mais apagado (ver
+    # test_a_second_wav_under_the_same_stem...). Quem o torna visível é este
+    # aviso: entregue a nota, o stem está marcado como processado, e no poll
+    # seguinte o que sobrou na pasta é exatamente um arquivo de stem
+    # processado. Sem isso a remoção sai e o silêncio fica.
+    cfg = make_cfg(tmp_path)
+    files = [
+        RemoteFile("w1", "boot-00042318.wav", NOW - timedelta(minutes=10)),
+        RemoteFile("w2", "boot-00042318.wav", NOW - timedelta(minutes=1)),
+        RemoteFile("s1", "boot-00042318.json", NOW - timedelta(minutes=1)),
+    ]
+    blob = {"w1": WAV, "w2": wav_bytes(3), "s1": json.dumps({"clock_synced": True}).encode("utf-8")}
+    drive = FakeDrive(files, blob)
+    poller = DrivePoller(cfg, drive, lambda n: None, ProcessedIds(tmp_path / "seen.json"),
+                         now=lambda: NOW)
+    assert poller.poll_once() == 1
+
+    # O que o Drive lista no poll seguinte: a nota entregue saiu, a cópia
+    # extra ficou.
+    drive.files = [f for f in drive.files if f.id not in drive.deleted]
+    assert [f.id for f in drive.files] == ["w2"]
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        assert poller.poll_once() == 0
+
+    avisos = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(avisos) == 1
+    assert "boot-00042318" in avisos[0]
+    assert drive.deleted == ["w1", "s1"]
 
 
 def test_the_sidecar_of_a_processed_note_stays_with_its_wav(tmp_path):

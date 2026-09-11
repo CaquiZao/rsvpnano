@@ -141,6 +141,14 @@ criou, nunca o resto do seu Drive. Ele fica com um `DrivePoller` em background, 
 verifica a pasta configurada a cada `poll_s` segundos, baixa o par `.wav`+`.json` que
 achar, entrega para a mesma pipeline da rota HTTP e remove os dois arquivos do Drive.
 
+**Arquivo que sobra na pasta não é necessariamente lixo.** Uma gravação cujo stem
+colidiu com uma nota já entregue fica lá **de propósito**: o stem é o nome que o device
+escreveu, e sem relógio sincronizado ele reinicia em 0 a cada boot, então dois boots
+cunham o mesmo nome para gravações diferentes. O device já apagou a cópia dele quando o
+upload deu certo, então esse arquivo pode ser a **única cópia** daquela gravação. O
+bridge avisa no log a cada poll, com os nomes (`arquivos de note_id já processado na
+pasta do Drive: ...`) — **confira o log antes de esvaziar a pasta.**
+
 **A tela de consentimento OAuth do projeto Google Cloud precisa estar em "Published",
 não em "Testing".** Em Testing, o Google expira o refresh token em 7 dias — o bridge
 para de conseguir acesso novo sem aviso, e a rota de queda volta a falhar em

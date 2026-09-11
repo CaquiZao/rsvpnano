@@ -213,10 +213,25 @@ mão — e o **sidecar pareado fica com eles**, porque sem o metadado ao lado o 
 `boot-00042318.wav` e nada que diga de quando ele é. **Custo aceito:** o resíduo acumula na pasta e
 é listado a cada poll.
 
+**Esse resíduo não é lixo inofensivo, e por isso é logado.** O device apaga a cópia dele quando o
+upload dá certo (`DriveResult::Sent` → `QueueAction::Delete`), então o arquivo que fica na pasta
+pode ser a **única cópia** daquela gravação em qualquer lugar. Descrever isso como acúmulo
+inofensivo convida quem cuida da pasta a esvaziá-la, e "invisível mas recuperável à mão" não é
+recuperável se ninguém sabe que o arquivo existe: `plan_inbox` emite **um `log.warning` por poll**
+nomeando os stems encontrados e dizendo o que eles podem ser. O `bridge/README.md` diz ao usuário
+para conferir o log antes de limpar a pasta.
+
 **O que `plan_inbox` reporta para apagar** é só o sidecar órfão de verdade: um `.json` que nenhum
 `.wav` da pasta casa, passada a carência — não carrega gravação. Todas as outras remoções vêm de
 uma nota que o poller entregou (entrega confirmada) ou recusou (o áudio já está em `rejected/`
 antes de o arquivo sair do Drive).
+
+**Um `.wav` extra com o mesmo stem também fica.** A nota sai do mais antigo, e o resto parecia
+perdedor de um retry — o poller os apagava sem nunca baixá-los. É a mesma premissa recusada acima:
+boot 1 sobe o `.wav` e falha o sidecar, boot 2 grava no mesmo milissegundo-desde-o-boot e sobe o
+par, e a pasta tem duas gravações diferentes sob um nome. Apagar a mais nova a destruía sem nota e
+sem cópia. Ela fica na pasta e, como o stem acaba de ser marcado como processado, entra no aviso do
+parágrafo anterior no poll seguinte.
 
 ## 8. Lado do device
 
@@ -235,8 +250,9 @@ antes de o arquivo sair do Drive).
 - **`src/handy_bridge/drive_poller.py`** (novo): thread que faz poll a cada **30 s** por padrão,
   seleciona pares completos, deduplica por `note_id` (ver 7), aplica as mesmas três validações do
   `POST /v1/notes` — meta parseável, `wav.inspect`, duração mínima —, apaga o sidecar órfão que o
-  plano reporta e os arquivos de cada nota que entregou ou recusou (nunca os de um `note_id` já
-  processado, ver 7) e chama `worker.submit()`. Trinta segundos
+  plano reporta e o `.wav` mais o `.json` de cada nota que entregou ou recusou (nunca os de um
+  `note_id` já processado nem um `.wav` extra do mesmo stem, ver 7) e chama `worker.submit()`.
+  Trinta segundos
   porque a rota de queda já é a lenta: o gargalo é o upload do device, não a espera do poll, e um
   intervalo curto multiplicaria chamadas de API sem encurtar nada perceptível.
 - **`src/handy_bridge/config.py`**: seção `[drive]` — credenciais, id da pasta, intervalo

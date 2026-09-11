@@ -28,10 +28,15 @@
   de um `note_id` já processado são **pulados, não apagados**: `note_id` é o stem que o device
   escreve, que sem relógio sincronizado é `boot-%08lu` (reinicia em 0 a cada boot), então dois boots
   cunham o mesmo nome para gravações diferentes e apagar por esse critério já destruiu uma gravação.
-  O sidecar pareado fica com o `.wav`, senão o resíduo não diz de quando é. Só saem da pasta: os
-  arquivos de uma nota entregue, os de uma recusada (áudio guardado em `rejected/` antes) e o
-  sidecar órfão de verdade, passada a carência. **Custo aceito:** resíduo acumulado, listado a cada
-  poll.
+  O sidecar pareado fica com o `.wav`, senão o resíduo não diz de quando é. Um `.wav` extra do mesmo
+  stem também fica: parecia perdedor de um retry, mas pode ser a gravação de outro boot, e era
+  apagado sem nunca ser baixado. Só saem da pasta: o `.wav` e o `.json` de uma nota entregue, os de
+  uma recusada (áudio guardado em `rejected/` antes) e o sidecar órfão de verdade, passada a
+  carência. **Custo aceito:** resíduo acumulado, listado a cada poll — **mas esse resíduo não é
+  lixo inofensivo.** O device apaga a cópia dele ao subir, então o arquivo que fica pode ser a
+  única cópia daquela gravação, e "recuperável à mão" só vale se alguém souber que ele existe:
+  `plan_inbox` emite um `log.warning` por poll nomeando os stems, e o README manda conferir o log
+  antes de limpar a pasta.
 - **TLS no device valida o certificado** (CA raiz do Google pinada). Isto **divirge de propósito** do `OtaUpdater.cpp`, que usa `setInsecure()`: aqui trafega um refresh token, e `setInsecure()` o entregaria a qualquer um na rede.
 - **Config do device é TOML**, lido com glaze como o resto (`glz::opts{.format = glz::TOML}`). O arquivo é `/config/drive.toml`, para seguir o padrão do repo — o device escreve JSON à mão, mas nunca lê JSON de config. A spec dizia `drive.json` e foi corrigida na revisão final.
 - **Testes rodam sem hardware, sem rede e sem gastar tokens.** HTTP é dublado injetando um callable, como `tests/test_telegram.py` já faz.

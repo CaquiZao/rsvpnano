@@ -8,9 +8,12 @@ firmware keeps them in planFrom() on the SD card, not in the uploader.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 WAV_SUFFIX = ".wav"
 SIDECAR_SUFFIX = ".json"
@@ -96,6 +99,7 @@ def plan_inbox(
 
     ready: list[ReadyNote] = []
     stale_sidecars: list[RemoteFile] = []
+    colididos: list[str] = []
     for note_id, wavs in wavs_by_note.items():
         if note_id in processed_ids:
             # This recording is already a note -- delivered by an earlier poll
@@ -103,7 +107,11 @@ def plan_inbox(
             # same store. Skipped, and only skipped: the stem may belong to
             # another boot's recording (see InboxPlan), so these bytes are not
             # certainly a copy of anything, and the sidecar beside them is what
-            # would identify them if a hand ever has to. Both stay.
+            # would identify them if a hand ever has to. Both stay -- and are
+            # named in the log, because the device deleted its own copy when
+            # the upload succeeded, so this .wav can be the last copy of that
+            # recording anywhere.
+            colididos.append(note_id)
             continue
         # The note is made from the oldest .wav of the stem. The others are
         # left in the folder and are not reported: they look like the losers
@@ -131,6 +139,19 @@ def plan_inbox(
         if now - sidecar.created_at < grace:
             continue
         stale_sidecars.append(sidecar)
+
+    if colididos:
+        # One line per poll with every stem, not one per file and not one per
+        # stem: repeated on every poll is the accepted cost -- deduping it
+        # would need state, and a warning too often is cheaper than a
+        # recording lost in silence.
+        log.warning(
+            "arquivos de note_id já processado na pasta do Drive: %s -- podem "
+            "ser outra gravação que colidiu com um stem já entregue, ficam na "
+            "pasta de propósito e podem ser a única cópia dela; não esvazie a "
+            "pasta sem conferir",
+            ", ".join(sorted(colididos)),
+        )
 
     ready.sort(key=lambda r: r.wav.created_at)
     stale_sidecars.sort(key=lambda f: f.created_at)
