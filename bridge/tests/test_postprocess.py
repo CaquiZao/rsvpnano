@@ -324,7 +324,7 @@ def test_check_recall_caps_the_missed_list_at_three():
     assert len(_processor(inner).check_recall("f", "t").missed) == 3
 
 
-def test_check_recall_skips_the_call_without_a_passage():
+def test_check_recall_skips_the_call_with_nothing_said():
     calls = []
 
     def runner(cmd, timeout):
@@ -332,10 +332,49 @@ def test_check_recall_skips_the_call_without_a_passage():
         return FakeCompleted(wrapper("{}"))
 
     proc = ClaudeCliProcessor("m", runner=runner)
-    assert not proc.check_recall("falei bastante", "")
     assert not proc.check_recall("", "trecho do livro")
-    # Nenhuma chamada gasta quando nao ha o que comparar.
+    # Nenhuma chamada gasta quando nao ha o que avaliar.
     assert calls == []
+
+
+def test_check_recall_without_a_passage_still_judges_the_thinking():
+    """Duas das tres partes nunca precisaram do trecho.
+
+    Uma gravacao que chega sem ancora de leitura -- o sidecar nao veio, ou foi
+    perdido -- nao produzia recall nenhum, e o aviso no Telegram era a
+    transcricao e mais nada. So a conferencia factual precisa do trecho; avaliar
+    o raciocinio e aprofundar usam conhecimento de mundo de proposito.
+    """
+    inner = (
+        '{"points":[{"said":"X","actual":"","correct":true}],"missed":["y"],'
+        '"reasoning":"seu raciocinio se sustenta","deepening":"o proximo fio"}'
+    )
+    got = _processor(inner).check_recall("falei bastante", "")
+    assert got.reasoning == "seu raciocinio se sustenta"
+    assert got.deepening == "o proximo fio"
+    # Sem trecho nao ha contra o que conferir, entao a conferencia e descartada
+    # mesmo quando o modelo insiste em mandar uma.
+    assert got.points == []
+    assert got.missed == []
+    assert got.no_passage is True
+    assert got.outside_passage is True
+
+
+def test_check_recall_tells_the_model_there_is_no_passage():
+    calls = []
+
+    def runner(cmd, timeout):
+        calls.append(cmd)
+        return FakeCompleted(wrapper('{"reasoning":"r","deepening":"d"}'))
+
+    ClaudeCliProcessor("m", runner=runner).check_recall("falei", "")
+    # Sem isso o modelo inventa um trecho para conferir contra.
+    assert "NENHUM" in " ".join(calls[0])
+
+
+def test_check_recall_with_a_passage_does_not_claim_the_anchor_was_missing():
+    inner = '{"points":[],"missed":[],"reasoning":"r","deepening":"d"}'
+    assert _processor(inner).check_recall("falei", "trecho").no_passage is False
 
 
 def test_check_recall_drops_a_point_without_a_claim():

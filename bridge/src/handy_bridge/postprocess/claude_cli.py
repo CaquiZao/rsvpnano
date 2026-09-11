@@ -330,14 +330,27 @@ class ClaudeCliProcessor:
         return answers
 
     def check_recall(self, spoken: str, passage: str) -> RecallCheck:
-        """Compare what was said against what was read, in one call."""
-        if not spoken.strip() or not passage.strip():
+        """Judge the recollection and the thinking behind it, in one call.
+
+        Runs without a passage on purpose. Only Part 1 needs one; Parts 2 and 3
+        judge the reasoning and extend it, and were written to use knowledge from
+        outside the book. A recording that arrived with no reading anchor used to
+        produce nothing at all here, so what reached the phone was the transcript
+        and not one word about it.
+        """
+        if not spoken.strip():
             return RecallCheck()
 
+        no_passage = not passage.strip()
+        read = (
+            "\nTrecho lido: NENHUM - esta gravação chegou sem âncora de leitura, então a "
+            'PARTE 1 não se aplica: ponha "outside_passage" como true e deixe "points" e '
+            '"missed" vazios. Faça as Partes 2 e 3 normalmente, que é todo o valor aqui.\n'
+            if no_passage
+            else f"\nTrecho lido:\n{passage}\n"
+        )
         payload = self._run(
-            RECALL_PROMPT
-            + f"\nTrecho lido:\n{passage}\n"
-            + f"\nO que a pessoa disse:\n{spoken}\n"
+            RECALL_PROMPT + read + f"\nO que a pessoa disse:\n{spoken}\n"
         )
 
         points: list[RecallPoint] = []
@@ -362,7 +375,9 @@ class ClaudeCliProcessor:
         ]
         # Fora do trecho a conferencia factual nao tem contra o que julgar: o modelo
         # foi instruido a esvazia-la, e aqui isso e imposto em vez de pedido.
-        outside = bool(payload.get("outside_passage", False))
+        # Sem trecho a regra e a mesma e nao depende do modelo obedecer: nao ha
+        # contra o que conferir, entao a conferencia cai aqui de qualquer forma.
+        outside = bool(payload.get("outside_passage", False)) or no_passage
         if outside:
             points, missed = [], []
         return RecallCheck(
@@ -371,6 +386,7 @@ class ClaudeCliProcessor:
             reasoning=str(payload.get("reasoning", "")).strip(),
             deepening=str(payload.get("deepening", "")).strip(),
             outside_passage=outside,
+            no_passage=no_passage,
         )
 
     def summarize_chapter(self, entries: list[str]) -> str:

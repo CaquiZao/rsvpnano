@@ -141,14 +141,20 @@ def process_note(
             chapter = chapters_mod.resolve(index, excerpt, word_offset)
 
     recall = RecallCheck()
-    if note_kind == "recall" and processor is not None and index and chapter:
-        try:
+    if note_kind == "recall" and processor is not None:
+        # No anchor is not a reason to skip this. Only the factual conference needs
+        # the passage; judging the reasoning and deepening it were written to use
+        # knowledge from outside the book, and gating all three on the anchor is
+        # what sent a recovered note to the phone as a bare transcript.
+        passage = ""
+        if index and chapter:
             passage = chapters_mod.passage(
                 index,
                 chapter.chapter,
                 _last_recall_offset(cfg, book, chapter.chapter),
                 word_offset,
             )
+        try:
             recall = processor.check_recall(body, passage)
         except PostProcessError as exc:
             # The check is a convenience; the note and its cards still go out.
@@ -182,6 +188,7 @@ def process_note(
             recall_reasoning=recall.reasoning,
             recall_deepening=recall.deepening,
             recall_outside=recall.outside_passage,
+            recall_no_passage=recall.no_passage,
         ),
     )
 

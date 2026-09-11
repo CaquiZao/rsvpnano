@@ -55,6 +55,11 @@ class RecallCheck:
     # capitulo anterior, ou a moldura do livro. A conferencia factual e descartada
     # nesse caso, porque nao ha contra o que confiri-la.
     outside_passage: bool = False
+    # True quando nao havia trecho nenhum: a gravacao chegou sem ancora de leitura.
+    # Implica outside_passage, e existe separado dele porque o motivo que a nota
+    # mostra e diferente -- "o trecho nao cobre isso" seria mentira quando nao
+    # houve trecho.
+    no_passage: bool = False
 
     def __bool__(self) -> bool:
         return bool(self.points or self.missed or self.reasoning or self.deepening)

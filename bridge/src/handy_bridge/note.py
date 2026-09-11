@@ -51,6 +51,7 @@ class NoteData:
     recall_reasoning: str = ""
     recall_deepening: str = ""
     recall_outside: bool = False
+    recall_no_passage: bool = False
 
 
 def slugify(text: str) -> str:
@@ -130,7 +131,7 @@ def render(note: NoteData) -> str:
 
     lines += render_recall(note.recall_points, note.recall_missed,
                            note.recall_reasoning, note.recall_deepening,
-                           note.recall_outside)
+                           note.recall_outside, note.recall_no_passage)
 
     # Answers are content the user wants to read, so they render expanded — unlike the
     # raw transcript below, which is reference material and stays collapsed.
@@ -160,6 +161,13 @@ OUTSIDE_NOTE = (
     "> Você falou de material que este trecho não cobre, então não há o que conferir "
     "contra o texto. A avaliação abaixo olha o raciocínio."
 )
+# Motivo diferente, frase diferente: dizer que "o trecho não cobre" seria mentira
+# quando não houve trecho nenhum, e a diferença importa porque esta é acionável --
+# a âncora vem do sidecar da gravação.
+NO_PASSAGE_NOTE = (
+    "> Esta gravação chegou sem âncora de leitura, então não havia trecho para "
+    "conferir contra. A avaliação abaixo olha o raciocínio."
+)
 
 
 def render_recall(
@@ -168,6 +176,7 @@ def render_recall(
     reasoning: str = "",
     deepening: str = "",
     outside: bool = False,
+    no_passage: bool = False,
 ) -> list[str]:
     """Show what was said next to what the book says, then judge the thinking.
 
@@ -187,7 +196,7 @@ def render_recall(
 
     lines: list[str] = []
     if outside and (reasoning.strip() or deepening.strip()):
-        lines += [OUTSIDE_NOTE, ""]
+        lines += [NO_PASSAGE_NOTE if no_passage else OUTSIDE_NOTE, ""]
     if not points and not missed:
         return lines + _render_discussion(reasoning, deepening)
 

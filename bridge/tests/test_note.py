@@ -343,3 +343,19 @@ def test_render_recall_outside_the_passage_drops_the_check_and_says_why():
 
 def test_render_recall_stays_empty_when_there_is_nothing_at_all():
     assert note_mod.render_recall([], [], "", "", False) == []
+
+
+def test_render_recall_without_an_anchor_says_there_was_no_passage():
+    """The reason has to be the true one.
+
+    "This passage does not cover it" is a lie when no passage ever arrived, and
+    the two cases are told apart by different flags for exactly that reason.
+    """
+    lines = note_mod.render_recall(
+        [], [], "seu raciocínio se sustenta", "o próximo fio", True, no_passage=True
+    )
+    body = "\n".join(lines)
+    assert "sem âncora" in body
+    assert "não cobre" not in body
+    assert "seu raciocínio se sustenta" in body
+    assert "o próximo fio" in body

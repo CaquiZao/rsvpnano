@@ -133,7 +133,8 @@ def test_a_note_that_is_not_a_recall_is_never_checked(tmp_path):
 
 
 def test_a_recall_without_a_book_does_not_explode(tmp_path):
-    # Sem livro, o indice e o capitulo ficam None, e a checagem nao pode tropecar.
+    # Sem livro, o indice e o capitulo ficam None, e a checagem nao pode tropecar
+    # -- nem ao montar o trecho, nem ao ficar sem um.
     cfg = make_cfg(tmp_path)
     proc = SummarizingProcessor()
     path = process_note(
@@ -143,7 +144,10 @@ def test_a_recall_without_a_book_does_not_explode(tmp_path):
         processor=proc,
     )
     assert path.is_file()
-    assert proc.recall_calls == []
+    # A chamada acontece, com trecho vazio: e o que deixa o raciocinio e o
+    # aprofundamento valerem sem ancora. Ver
+    # test_a_recall_without_an_anchor_is_still_discussed.
+    assert proc.recall_calls == [("Falei o que entendi.", "")]
 
 
 def test_the_recall_window_starts_at_the_previous_recall(tmp_path):
@@ -277,3 +281,47 @@ def test_the_book_summary_lists_chapters_without_a_record(tmp_path):
     # passou sem engajamento.
     assert "Capítulos sem registro" in book
     assert "Três" in book.split("Capítulos sem registro")[1]
+
+
+def test_a_recall_without_an_anchor_is_still_discussed(tmp_path):
+    """The gate used to be the anchor, and two of the three parts never needed it.
+
+    This is the note that was lost and recovered: its sidecar had already been
+    deleted when the transcription failed, so it came back with no reading
+    position. What reached Telegram was the transcript and not one word about it.
+    """
+    cfg = make_cfg(tmp_path, pp_enabled=True)
+    proc = SummarizingProcessor(
+        recall=RecallCheck(
+            reasoning="Seu raciocínio se sustenta.",
+            deepening="O próximo fio a puxar.",
+            outside_passage=True,
+            no_passage=True,
+        )
+    )
+    # No book, no word_offset, no excerpt: nothing to resolve a chapter from.
+    incoming = IncomingNote(
+        "sem-ancora",
+        make_wav(tmp_path / "sem-ancora.wav"),
+        {"clock_synced": True, "recorded_at": "2026-09-11T14:09:00"},
+    )
+
+    path = process_note(incoming, cfg, transcribe_fn=ok_transcribe(), processor=proc)
+
+    assert proc.recall_calls == [("Falei o que entendi.", "")]
+    body = path.read_text(encoding="utf-8")
+    assert "Seu raciocínio se sustenta." in body
+    assert "O próximo fio a puxar." in body
+    assert "sem âncora" in body
+
+
+def test_a_recall_with_an_anchor_still_gets_the_passage(tmp_path):
+    """Guard for the change above: losing the passage here would silently turn
+    every conference into a discussion."""
+    cfg = vault_with_epub(tmp_path, [CH_ONE, CH_TWO])
+    proc = SummarizingProcessor()
+
+    process_note(recall_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc)
+
+    assert len(proc.recall_calls) == 1
+    assert proc.recall_calls[0][1].strip(), "o trecho lido tem de chegar ao modelo"
