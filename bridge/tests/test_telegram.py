@@ -114,25 +114,33 @@ def test_poll_passes_the_offset_so_updates_are_not_reprocessed():
 def test_build_arrival_names_the_kind_and_the_title():
     from handy_bridge.telegram import build_arrival
 
-    got = build_arrival("recall", "Tres revolucoes", "corpo limpo", "o que eu falei")
+    got = build_arrival("recall", "Tres revolucoes", "o que eu falei")
     assert got.startswith("🔁 Recall — Tres revolucoes")
-    assert "corpo limpo" in got
     assert "o que eu falei" in got
 
 
-def test_build_arrival_puts_the_raw_transcript_after_the_substance():
+def test_build_arrival_does_not_repeat_the_transcript_as_a_cleaned_body():
     from handy_bridge.telegram import build_arrival
 
-    got = build_arrival("anotação", "T", "CORPO", "FALADO")
+    # O corpo limpo e a mesma fala arrumada, e no celular nao ha como recolher
+    # nada: mandar os dois faz a pessoa ler a mesma coisa duas vezes.
+    got = build_arrival("recall", "T", "houveram tres revolucoes")
+    assert got.count("houveram tres revolucoes") == 1
+
+
+def test_build_arrival_puts_the_transcript_after_the_discussion():
+    from handy_bridge.telegram import build_arrival
+
+    got = build_arrival("recall", "T", "FALADO", reasoning="RACIOCINIO")
     # A transcricao e referencia: vem depois do que foi trabalhado, como na nota.
-    assert got.index("CORPO") < got.index("FALADO")
+    assert got.index("RACIOCINIO") < got.index("FALADO")
 
 
 def test_build_arrival_carries_the_recall_discussion():
     from handy_bridge.telegram import build_arrival
 
     got = build_arrival(
-        "recall", "T", "corpo", "falado",
+        "recall", "T", "falado",
         reasoning="Seu instinto acertou a aceleracao.",
         deepening="A Belle Epoque foi o apice.",
     )
@@ -143,7 +151,7 @@ def test_build_arrival_carries_the_recall_discussion():
 def test_build_arrival_cuts_a_long_transcript_and_says_so():
     from handy_bridge.telegram import MAX_TRANSCRIPT_CHARS, build_arrival
 
-    got = build_arrival("anotação", "T", "corpo", "x" * (MAX_TRANSCRIPT_CHARS + 500))
+    got = build_arrival("anotação", "T", "x" * (MAX_TRANSCRIPT_CHARS + 500))
     assert "transcrição cortada" in got
     assert len(got) < MAX_TRANSCRIPT_CHARS + 400
 
@@ -151,9 +159,9 @@ def test_build_arrival_cuts_a_long_transcript_and_says_so():
 def test_build_arrival_warns_that_answers_are_coming():
     from handy_bridge.telegram import build_arrival
 
-    um = build_arrival("pergunta", "T", "c", "f", answers_coming=1)
-    dois = build_arrival("pergunta", "T", "c", "f", answers_coming=2)
+    um = build_arrival("pergunta", "T", "f", answers_coming=1)
+    dois = build_arrival("pergunta", "T", "f", answers_coming=2)
     assert "1 resposta chegando" in um
     assert "2 respostas chegando" in dois
     # Sem resposta a caminho, nada de promessa que nao se cumpre.
-    assert "chegando" not in build_arrival("anotação", "T", "c", "f")
+    assert "chegando" not in build_arrival("anotação", "T", "f")

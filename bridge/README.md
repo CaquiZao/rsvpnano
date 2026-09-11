@@ -360,8 +360,14 @@ se perde. O formato do arquivo foi extraído do código do plugin obsidian-kanba
 ## O Telegram como registro do que chegou
 
 Toda nota que entra no vault é anunciada no seu Telegram — inclusive uma anotação simples,
-sem pergunta nenhuma. A mensagem diz o tipo, o título, o corpo limpo, a transcrição do que
-você falou e, num recall, a avaliação do raciocínio e o aprofundamento.
+sem pergunta nenhuma. A mensagem diz o tipo, o título, a transcrição do que você falou e,
+num recall, a avaliação do raciocínio e o aprofundamento.
+
+**Sem o corpo limpo pelo LLM**, mesmo a nota tendo um. Ele é a mesma fala arrumada —
+`houveram` virando `houve`, a palavra marcadora removida —, então no celular ele lê como a
+transcrição impressa duas vezes. A nota se dá bem com os dois porque lá a crua fica num
+callout recolhido; uma mensagem de chat não tem onde recolher. Fica o que diz algo novo, e
+o polimento continua a um toque de distância no vault.
 
 Anunciar **toda** nota não é barulho, é o que torna o resto possível: o bridge lembra a
 qual nota cada mensagem pertence, e responder qualquer mensagem da conversa é fazer uma

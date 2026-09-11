@@ -209,7 +209,6 @@ def process_note(
                 build_arrival(
                     note_kind,
                     title,
-                    body,
                     raw_text,
                     book,
                     recall.reasoning,

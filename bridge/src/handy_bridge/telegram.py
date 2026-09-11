@@ -47,7 +47,6 @@ MAX_TRANSCRIPT_CHARS = 900
 def build_arrival(
     kind: str,
     title: str,
-    body: str,
     transcript: str,
     book: str | None = None,
     reasoning: str = "",
@@ -56,16 +55,19 @@ def build_arrival(
 ) -> str:
     """Announce a note that just landed in the vault, with what it says.
 
-    Ordered for a phone: what it is, then the substance, then what you actually
-    said. The raw transcript goes last because it is reference -- you read it when
-    the cleaned version looks wrong, which is the same reason the note keeps it in
-    a collapsed callout rather than up front.
+    Deliberately without the LLM-cleaned body, even though the note has it. The
+    cleaned version is the same words tidied -- `houveram` to `houve`, the spoken
+    marker word removed -- so on a phone it reads as the transcript printed twice.
+    The note gets away with carrying both because the raw one sits in a collapsed
+    callout; a chat message has nowhere to collapse it to.
+
+    What survives is what says something new: the title, the discussion of the
+    thinking, and the words you actually spoke. The polish is one tap away in the
+    vault.
     """
     header = KIND_HEADERS.get(kind.strip().lower(), "📝 Nota")
     lines = [f"{header} — {title.strip()}" if title.strip() else header, ""]
 
-    if body.strip():
-        lines += [body.strip(), ""]
     for label, text in (("🧠 Seu raciocínio", reasoning), ("💡 Indo mais fundo", deepening)):
         if text.strip():
             lines += [f"{label}: {text.strip()}", ""]
