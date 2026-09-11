@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 
 namespace voice {
 
@@ -72,6 +73,16 @@ namespace voice {
         std::string out(stamp);
         out += kWavExt;
         return out;
+    }
+
+    std::string bootStamp(uint32_t bootSeq, uint32_t bootMs) {
+        // Fixed widths on purpose: lexical order is the only order this queue has, so
+        // both fields have to compare as numbers do. Four digits of sequence is decades
+        // of power cycles, and eight of uptime is 27 hours -- longer than a battery.
+        char buffer[32] = {};
+        std::snprintf(buffer, sizeof(buffer), "boot-%04lu-%08lu",
+                      static_cast<unsigned long>(bootSeq), static_cast<unsigned long>(bootMs));
+        return buffer;
     }
 
     std::string parkedName(std::string_view wavName) {
