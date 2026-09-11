@@ -35,7 +35,11 @@ encontra sem você configurar endereço IP em lugar nenhum.
 - Python 3.13+ e [uv](https://docs.astral.sh/uv/)
 - [Handy](https://github.com/cjpais/Handy) instalado, **com o modelo já baixado**
   (`--transcribe-file` não baixa modelo)
-- `claude` CLI no PATH, se você usar o pós-processamento padrão
+- `claude` CLI no PATH, se você usar o pós-processamento padrão. O PATH que importa é
+  o do processo que **subiu** o bridge: iniciá-lo de um shell com PATH enxuto (um
+  `Start-Process` sem o perfil, por exemplo) faz toda nota chegar sem título, sem
+  limpeza e sem recall, com `claude: not found` no log. Aqui ele mora em
+  `C:/Users/kakam/.local/bin`.
 
 ## Instalação
 
