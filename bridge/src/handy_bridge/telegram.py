@@ -25,7 +25,18 @@ class TelegramError(Exception):
 
 
 def build_message(question: str, answer: str, book: str | None) -> str:
-    lines = [f"❓ {question.strip()}", "", answer.strip(), ""]
+    """The answer to one question, as a reply under the note's arrival notice.
+
+    An empty question renders answer-only, and the caller passes one when the
+    question is just the whole recording again. That happens for a `pergunta`
+    note where no specific question could be extracted: the fallback asks the
+    model about the entire body, so echoing it here would reprint the transcript
+    the arrival notice showed a second earlier.
+    """
+    lines = []
+    if question.strip():
+        lines += [f"❓ {question.strip()}", ""]
+    lines += [answer.strip(), ""]
     if book:
         lines.append(f"📖 {book}")
     lines.append(WARNING)

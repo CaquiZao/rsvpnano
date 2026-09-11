@@ -225,11 +225,19 @@ def process_note(
 
     if telegram is not None and answers:
         for answer in answers:
+            # When no specific question could be extracted, the fallback asks the
+            # model about the whole recording -- so the "question" is the body, and
+            # echoing it would reprint what the arrival notice just showed.
+            echoes_the_note = _same_text(answer.question, body) or _same_text(
+                answer.question, raw_text
+            )
             try:
                 # Threaded under the arrival, so the phone nests them together and
                 # the order on screen matches the order things happened.
                 message_id = telegram.send(
-                    build_message(answer.question, answer.answer, book),
+                    build_message(
+                        "" if echoes_the_note else answer.question, answer.answer, book
+                    ),
                     reply_to=arrival_id or None,
                 )
             except Exception as exc:
@@ -298,6 +306,22 @@ def _questions_to_answer(
     if not out and note_kind == "pergunta" and body.strip():
         out.append(body.strip())
     return out
+
+
+def _same_text(left: str, right: str) -> bool:
+    """Whether two strings say the same thing, ignoring only how they are written.
+
+    Deliberately not a similarity score with a threshold: the case this exists for
+    is the question being literally the note's body, and a threshold would be one
+    more knob to get wrong. Punctuation and case are stripped because the cleaned
+    body differs from the transcript by exactly that much.
+    """
+    if not left.strip() or not right.strip():
+        return False
+    keep = lambda text: "".join(  # noqa: E731 - one expression, used twice below
+        ch.lower() for ch in text if ch.isalnum() or ch.isspace()
+    ).split()
+    return keep(left) == keep(right)
 
 
 def _last_recall_offset(cfg: Config, book: str, chapter: int) -> int | None:

@@ -583,3 +583,36 @@ def test_a_note_creates_every_kind_directory(tmp_path):
         "Recall",
         "fonte",
     }
+
+
+def test_telegram_answer_does_not_echo_the_whole_recording(tmp_path):
+    # Nota do tipo pergunta sem pergunta extraida: o fallback manda o corpo todo
+    # para o modelo, e a resposta chegava reimprimindo a transcricao que o aviso
+    # tinha acabado de mostrar.
+    cfg = cfg_with(tmp_path)
+    corpo = "Gostaria de saber como vai o andamento do relatorio."
+    proc = RichProcessor(
+        PPR("Consulta sobre o relatorio", [], corpo, kind="pergunta"),
+        answers=[Answer(corpo, "Nao tenho relatorio algum.")],
+    )
+    tg = RecordingTelegram()
+    process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc, telegram=tg)
+
+    assert len(tg.sent) == 2
+    aviso, resposta = tg.sent
+    # O aviso leva a transcricao do que foi falado.
+    assert "ola mundo" in aviso
+    # A resposta vem sem repetir a pergunta, porque a pergunta era a nota.
+    assert "❓" not in resposta
+    assert "Nao tenho relatorio algum." in resposta
+
+
+def test_telegram_answer_still_shows_a_real_question(tmp_path):
+    cfg = cfg_with(tmp_path)
+    proc = RichProcessor(
+        PPR("T", [], "corpo diferente da pergunta", tasks=[Task("O que foi o Big Bang?", "keyword", True)]),
+        answers=[Answer("O que foi o Big Bang?", "O evento inicial.")],
+    )
+    tg = RecordingTelegram()
+    process_note(reading_note(tmp_path), cfg, transcribe_fn=ok_transcribe(), processor=proc, telegram=tg)
+    assert "❓ O que foi o Big Bang?" in tg.sent[1]

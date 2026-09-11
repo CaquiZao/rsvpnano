@@ -165,3 +165,21 @@ def test_build_arrival_warns_that_answers_are_coming():
     assert "2 respostas chegando" in dois
     # Sem resposta a caminho, nada de promessa que nao se cumpre.
     assert "chegando" not in build_arrival("anotação", "T", "f")
+
+
+def test_build_message_without_a_question_renders_answer_only():
+    from handy_bridge.telegram import build_message
+
+    # Acontece quando a pergunta era a gravacao inteira: o aviso de chegada acabou
+    # de mostrar aquele texto, e repeti-lo na resposta imprime a fala duas vezes.
+    got = build_message("", "A resposta.", "Sapiens")
+    assert "❓" not in got
+    assert got.startswith("A resposta.")
+    assert "📖 Sapiens" in got
+
+
+def test_build_message_keeps_a_real_question():
+    from handy_bridge.telegram import build_message
+
+    got = build_message("O que foi o Big Bang?", "O evento inicial.", None)
+    assert got.startswith("❓ O que foi o Big Bang?")
