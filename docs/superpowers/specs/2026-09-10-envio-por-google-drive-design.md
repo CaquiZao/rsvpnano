@@ -195,11 +195,28 @@ de entregar a nota ao worker. Sem isso, a gravação cuja cópia ficou no Drive 
 sidecar falhou) entrava pela LAN no flush seguinte e voltava pelo Drive depois da carência — duas
 notas, e `_unique_path` faz da segunda um arquivo novo, não uma sobrescrita.
 
-**A pasta não se drena sozinha.** A remoção é melhor-esforço, o retry deixa cópia órfã, e um
-sidecar sem `.wav` nunca vira nota. Por isso a listagem é paginada (`nextPageToken` seguido até o
-fim) e `plan_inbox` também reporta o que deve ser apagado: os arquivos de um `note_id` já
-processado e o sidecar órfão passada a carência. Sem as duas coisas, uma página de itens velhos
-esconde as gravações novas — e o device já apagou a dele.
+**A pasta acumula, e é a paginação que impede isso de esconder uma gravação.** A remoção é
+melhor-esforço, o retry deixa cópia órfã, e um sidecar sem `.wav` nunca vira nota — sobra arquivo
+na pasta por desenho. Mas o que fazia uma gravação nova ficar invisível não era o acúmulo: era a
+listagem sem paginação (`pageSize` 200 com um `fields` sem `nextPageToken`, que torna uma página
+truncada indistinguível de uma listagem completa). `list_inbox` segue o `nextPageToken` até o fim,
+a pasta é sempre lida inteira, e nenhuma quantidade de resíduo esconde uma gravação nova.
+
+**Os arquivos de um `note_id` já processado ficam na pasta.** Esta seção prometeu o contrário — uma
+pasta que se drena sozinha — e drenar destruiu uma gravação. "Já processado" é uma afirmação sobre
+o `note_id`, e o `note_id` é o stem que o device escreve: sem relógio sincronizado esse stem é
+`boot-%08lu`, milissegundos desde o boot reiniciando em 0 a cada boot (`src/voice/Clock.cpp`), e as
+gravações pré-sync são exatamente as que caem para esta rota. Dois boots cunham o mesmo nome para
+gravações diferentes, então apagar por esse critério apaga um arquivo que pode ser uma gravação que
+ninguém nunca ouviu. Eles são **pulados**: ficam na pasta, invisíveis ao poller, recuperáveis à
+mão — e o **sidecar pareado fica com eles**, porque sem o metadado ao lado o que sobra é um
+`boot-00042318.wav` e nada que diga de quando ele é. **Custo aceito:** o resíduo acumula na pasta e
+é listado a cada poll.
+
+**O que `plan_inbox` reporta para apagar** é só o sidecar órfão de verdade: um `.json` que nenhum
+`.wav` da pasta casa, passada a carência — não carrega gravação. Todas as outras remoções vêm de
+uma nota que o poller entregou (entrega confirmada) ou recusou (o áudio já está em `rejected/`
+antes de o arquivo sair do Drive).
 
 ## 8. Lado do device
 
@@ -217,8 +234,9 @@ esconde as gravações novas — e o device já apagou a dele.
   transporte injetável, para os testes rodarem sem rede.
 - **`src/handy_bridge/drive_poller.py`** (novo): thread que faz poll a cada **30 s** por padrão,
   seleciona pares completos, deduplica por `note_id` (ver 7), aplica as mesmas três validações do
-  `POST /v1/notes` — meta parseável, `wav.inspect`, duração mínima —, apaga o que o plano reporta
-  como lixo e chama `worker.submit()`. Trinta segundos
+  `POST /v1/notes` — meta parseável, `wav.inspect`, duração mínima —, apaga o sidecar órfão que o
+  plano reporta e os arquivos de cada nota que entregou ou recusou (nunca os de um `note_id` já
+  processado, ver 7) e chama `worker.submit()`. Trinta segundos
   porque a rota de queda já é a lenta: o gargalo é o upload do device, não a espera do poll, e um
   intervalo curto multiplicaria chamadas de API sem encurtar nada perceptível.
 - **`src/handy_bridge/config.py`**: seção `[drive]` — credenciais, id da pasta, intervalo

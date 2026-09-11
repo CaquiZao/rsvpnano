@@ -23,6 +23,15 @@
   stem, então só o stem identifica a gravação. E é **um único registro para as duas portas de
   entrada** — o `POST /v1/notes` grava o `note_id` que ele aceitou —, senão a mesma gravação
   entregue pela LAN volta pelo Drive e vira uma segunda nota.
+- **O que a pasta do Drive acumula fica lá.** A listagem é paginada (`nextPageToken` seguido até o
+  fim) e é isso — e só isso — que impede uma pasta cheia de esconder uma gravação nova. Os arquivos
+  de um `note_id` já processado são **pulados, não apagados**: `note_id` é o stem que o device
+  escreve, que sem relógio sincronizado é `boot-%08lu` (reinicia em 0 a cada boot), então dois boots
+  cunham o mesmo nome para gravações diferentes e apagar por esse critério já destruiu uma gravação.
+  O sidecar pareado fica com o `.wav`, senão o resíduo não diz de quando é. Só saem da pasta: os
+  arquivos de uma nota entregue, os de uma recusada (áudio guardado em `rejected/` antes) e o
+  sidecar órfão de verdade, passada a carência. **Custo aceito:** resíduo acumulado, listado a cada
+  poll.
 - **TLS no device valida o certificado** (CA raiz do Google pinada). Isto **divirge de propósito** do `OtaUpdater.cpp`, que usa `setInsecure()`: aqui trafega um refresh token, e `setInsecure()` o entregaria a qualquer um na rede.
 - **Config do device é TOML**, lido com glaze como o resto (`glz::opts{.format = glz::TOML}`). O arquivo é `/config/drive.toml`, para seguir o padrão do repo — o device escreve JSON à mão, mas nunca lê JSON de config. A spec dizia `drive.json` e foi corrigida na revisão final.
 - **Testes rodam sem hardware, sem rede e sem gastar tokens.** HTTP é dublado injetando um callable, como `tests/test_telegram.py` já faz.
