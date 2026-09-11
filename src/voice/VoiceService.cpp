@@ -7,6 +7,7 @@
 
 #include "network/WifiConnection.h"
 #include "voice/Clock.h"
+#include "voice/DriveUploader.h"
 #include "voice/VoiceQueue.h"
 #include "voice/VoiceUploader.h"
 
@@ -90,6 +91,22 @@ namespace voice {
         return lastError_;
     }
 
+    uint32_t Service::flushGeneration() const {
+        return flushes_;
+    }
+
+    size_t Service::lastSentCount() const {
+        return lastSent_;
+    }
+
+    // Last thing a finished flush does, and the only place the generation moves: the
+    // count is published before the generation so a reader that sees the new
+    // generation cannot read the old count.
+    void Service::finish(size_t sent) {
+        lastSent_ = sent;
+        ++flushes_;
+    }
+
     void Service::taskEntry(void* self) {
         static_cast<Service*>(self)->run();
     }
@@ -169,35 +186,111 @@ namespace voice {
             endpoint = discoverBridge();
         }
         if (!endpoint) {
+            // Not finding the bridge says nothing about whether the bridge is on the
+            // network -- it might be, behind a firewall that only blocks inbound, and
+            // reachable to anything that could open a connection to it. That used to
+            // be reported as "Bridge nao esta na rede," a claim this code has no way
+            // to know is true. Drive is the fallback for exactly this gap, and it
+            // needs the radio that is already up, so it runs before disconnecting
+            // rather than after.
+            auto driveCredentials = loadDriveConfig(fs);
+            if (!driveCredentials) {
+                net::disconnect();
+                busy_ = false;
+                lastError_ = "Bridge fora da rede; Drive nao configurado";
+                return;
+            }
+
+            size_t sent = 0;
+            size_t refused = 0;
+            for (const auto& entry : items) {
+                const DriveResult result = uploadToDrive(fs, *driveCredentials, entry);
+                switch (actionFor(result)) {
+                case QueueAction::Keep:
+                    // Same "stop at the first failure" rule as the LAN route below.
+                    // A Drive result never parks (see actionFor(DriveResult) in
+                    // VoiceQueuePlan.cpp), so Keep is the only branch a failure can
+                    // land in; which message depends on what actually failed.
+                    switch (result) {
+                    case DriveResult::Unauthorized:
+                        // A pasta entra aqui junto com o token: um folder_id
+                        // errado ou apagado responde 404, e dizer "sem
+                        // internet" mandaria o usuario olhar o roteador por um
+                        // erro que esta no config.
+                        lastError_ = "Drive recusou: token ou pasta";
+                        break;
+                    case DriveResult::NoInternet:
+                    case DriveResult::Retry:
+                    case DriveResult::Sent:
+                        lastError_ = "Bridge fora da rede; sem internet";
+                        break;
+                    }
+                    break;
+                case QueueAction::Park:
+                    // actionFor(DriveResult) never returns this today. Handled anyway
+                    // so this switch stays the same shape as the LAN one below, and
+                    // so a future change there cannot fall through unnoticed.
+                    queue::markRejected(fs, entry);
+                    ++refused;
+                    continue;
+                case QueueAction::Delete:
+                    queue::markSent(fs, entry);
+                    ++sent;
+                    continue;
+                }
+                break;
+            }
+
             net::disconnect();
+            pendingCount_ = queue::pendingCount(fs);
             busy_ = false;
-            lastError_ = "Bridge nao esta na rede";
+            if (sent == items.size()) {
+                lastError_ = nullptr;
+            }
+            ESP_LOGI(kTag, "drive flush sent %u of %u, %u refused, %u still queued",
+                     static_cast<unsigned>(sent), static_cast<unsigned>(items.size()),
+                     static_cast<unsigned>(refused), static_cast<unsigned>(pendingCount_));
+            finish(sent);
             return;
         }
 
         size_t sent = 0;
+        size_t refused = 0;
         for (const auto& entry : items) {
-            const auto result = upload(fs, *endpoint, entry);
-            if (result == UploadResult::Retry) {
+            switch (actionFor(upload(fs, *endpoint, entry))) {
+            case QueueAction::Keep:
                 // Stop at the first network failure rather than hammering the rest: the
                 // problem is the link, not this note.
                 lastError_ = "Envio falhou";
                 break;
+            case QueueAction::Park:
+                // Out of the queue so it cannot loop, but still on the card. Asking
+                // again would be pointless; deleting it would be unrecoverable.
+                queue::markRejected(fs, entry);
+                ++refused;
+                continue;
+            case QueueAction::Delete:
+                queue::markSent(fs, entry);
+                ++sent;
+                continue;
             }
-            // Sent and Rejected both leave the queue. Re-sending what the bridge
-            // refused would loop forever.
-            queue::markSent(fs, entry);
-            ++sent;
+            break;
         }
 
         net::disconnect();
         pendingCount_ = queue::pendingCount(fs);
         busy_ = false;
-        if (sent == items.size()) {
+        if (refused > 0) {
+            // A refusal used to be counted as a delivery, which cleared this and left
+            // the reader told that a note the vault never received was on its way.
+            lastError_ = "Bridge recusou a nota";
+        } else if (sent == items.size()) {
             lastError_ = nullptr;
         }
-        ESP_LOGI(kTag, "flush sent %u of %u, %u still queued", static_cast<unsigned>(sent),
-                 static_cast<unsigned>(items.size()), static_cast<unsigned>(pendingCount_));
+        ESP_LOGI(kTag, "flush sent %u of %u, %u refused, %u still queued", static_cast<unsigned>(sent),
+                 static_cast<unsigned>(items.size()), static_cast<unsigned>(refused),
+                 static_cast<unsigned>(pendingCount_));
+        finish(sent);
     }
 
 } // namespace voice

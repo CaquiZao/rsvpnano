@@ -310,3 +310,52 @@ def test_a_blank_point_is_dropped_without_breaking_the_callout():
     out = render(sample(recall_points=[("  ", "", True), ("Real", "", True)]))
     assert "Real" in out
     assert out.count("**Você disse:**") == 1
+
+
+def test_render_recall_shows_the_reasoning_and_the_deepening_apart_from_the_check():
+    lines = note_mod.render_recall(
+        [("A veio antes de B", "", True)],
+        [],
+        reasoning="Seu instinto acertou a aceleracao.",
+        deepening="A Belle Epoque foi o apice, nao a largada.",
+    )
+    text = "\n".join(lines)
+    assert note_mod.RECALL_CALLOUT in text
+    assert note_mod.REASONING_CALLOUT in text
+    assert note_mod.DEEPENING_CALLOUT in text
+    # A conferencia julga contra o texto; as outras duas usam conhecimento de fora,
+    # e o aviso mais forte e o que separa uma coisa da outra para quem le.
+    assert note_mod.RECALL_WARNING in text
+    assert text.count(note_mod.DISCUSSION_WARNING) == 2
+
+
+def test_render_recall_outside_the_passage_drops_the_check_and_says_why():
+    lines = note_mod.render_recall(
+        [], [], reasoning="Voce confundiu o inicio com o apice.", deepening="Mais contexto.",
+        outside=True,
+    )
+    text = "\n".join(lines)
+    assert note_mod.OUTSIDE_NOTE in text
+    # Sem conferencia falsa: nao ha contra o que conferir.
+    assert note_mod.RECALL_CALLOUT not in text
+    assert note_mod.REASONING_CALLOUT in text
+
+
+def test_render_recall_stays_empty_when_there_is_nothing_at_all():
+    assert note_mod.render_recall([], [], "", "", False) == []
+
+
+def test_render_recall_without_an_anchor_says_there_was_no_passage():
+    """The reason has to be the true one.
+
+    "This passage does not cover it" is a lie when no passage ever arrived, and
+    the two cases are told apart by different flags for exactly that reason.
+    """
+    lines = note_mod.render_recall(
+        [], [], "seu raciocínio se sustenta", "o próximo fio", True, no_passage=True
+    )
+    body = "\n".join(lines)
+    assert "sem âncora" in body
+    assert "não cobre" not in body
+    assert "seu raciocínio se sustenta" in body
+    assert "o próximo fio" in body

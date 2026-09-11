@@ -22,7 +22,7 @@ from handy_bridge.postprocess import (
     RecallCheck,
     Task,
 )
-from handy_bridge.telegram import build_message
+from handy_bridge.telegram import build_arrival, build_message
 from handy_bridge.transcriber import Transcription
 from handy_bridge.transcriber import transcribe as default_transcribe
 
@@ -141,14 +141,20 @@ def process_note(
             chapter = chapters_mod.resolve(index, excerpt, word_offset)
 
     recall = RecallCheck()
-    if note_kind == "recall" and processor is not None and index and chapter:
-        try:
+    if note_kind == "recall" and processor is not None:
+        # No anchor is not a reason to skip this. Only the factual conference needs
+        # the passage; judging the reasoning and deepening it were written to use
+        # knowledge from outside the book, and gating all three on the anchor is
+        # what sent a recovered note to the phone as a bare transcript.
+        passage = ""
+        if index and chapter:
             passage = chapters_mod.passage(
                 index,
                 chapter.chapter,
                 _last_recall_offset(cfg, book, chapter.chapter),
                 word_offset,
             )
+        try:
             recall = processor.check_recall(body, passage)
         except PostProcessError as exc:
             # The check is a convenience; the note and its cards still go out.
@@ -179,6 +185,10 @@ def process_note(
             answers=[(a.question, a.answer) for a in answers],
             recall_points=[(p.said, p.actual, p.correct) for p in recall.points],
             recall_missed=list(recall.missed),
+            recall_reasoning=recall.reasoning,
+            recall_deepening=recall.deepening,
+            recall_outside=recall.outside_passage,
+            recall_no_passage=recall.no_passage,
         ),
     )
 
@@ -196,19 +206,78 @@ def process_note(
         except (kanban.KanbanError, OSError) as exc:
             log.warning("could not update the Kanban board for %s: %s", incoming.note_id, exc)
 
+    arrival_id = 0
+    if telegram is not None:
+        # Sent for every note, including a plain anotação that has no answer to
+        # deliver. That is the point: without it, most notes never appear on the
+        # phone, and a note you cannot see is a note you cannot ask about later.
+        try:
+            arrival_id = telegram.send(
+                build_arrival(
+                    note_kind,
+                    title,
+                    raw_text,
+                    book,
+                    recall.reasoning,
+                    recall.deepening,
+                    len(answers),
+                )
+            )
+        except Exception as exc:
+            log.warning("could not announce %s over Telegram: %s", incoming.note_id, exc)
+        # Seeded with the note itself, so a reply arrives with the content as
+        # context instead of an empty history.
+        if threads is not None and arrival_id:
+            _remember(threads, "remember", arrival_id, note_path, "", body or raw_text)
+
     if telegram is not None and answers:
         for answer in answers:
+            # When no specific question could be extracted, the fallback asks the
+            # model about the whole recording -- so the "question" is the body, and
+            # echoing it would reprint what the arrival notice just showed.
+            echoes_the_note = _same_text(answer.question, body) or _same_text(
+                answer.question, raw_text
+            )
             try:
-                message_id = telegram.send(build_message(answer.question, answer.answer, book))
+                # Threaded under the arrival, so the phone nests them together and
+                # the order on screen matches the order things happened.
+                message_id = telegram.send(
+                    build_message(
+                        "" if echoes_the_note else answer.question, answer.answer, book
+                    ),
+                    reply_to=arrival_id or None,
+                )
             except Exception as exc:
                 log.warning("could not deliver an answer over Telegram: %s", exc)
                 continue
             # Remember which note this message belongs to, so replying to it on the
             # phone lands the follow-up in the right place.
             if threads is not None and message_id:
-                threads.remember(message_id, note_path, answer.question, answer.answer)
+                if arrival_id:
+                    _remember(
+                        threads, "append", arrival_id, answer.question, answer.answer, message_id
+                    )
+                else:
+                    _remember(
+                        threads, "remember", message_id, note_path, answer.question, answer.answer
+                    )
 
     return note_path
+
+
+def _remember(threads: object, method: str, *args) -> None:
+    """Record a Telegram message against its note, or say why it could not.
+
+    Wrapped because of what happens above this line: the note is already on
+    disk, and the worker treats a raise from here as "this recording produced
+    nothing" and parks it for a retry -- which would write the note a second
+    time. Losing the ability to reply to a message costs a convenience; a
+    duplicated note costs trust in the vault.
+    """
+    try:
+        getattr(threads, method)(*args)
+    except Exception as exc:  # noqa: BLE001 - the thread store is a convenience
+        log.warning("could not record the Telegram thread (%s): %s", method, exc)
 
 
 def _update_board(
@@ -263,6 +332,22 @@ def _questions_to_answer(
     if not out and note_kind == "pergunta" and body.strip():
         out.append(body.strip())
     return out
+
+
+def _same_text(left: str, right: str) -> bool:
+    """Whether two strings say the same thing, ignoring only how they are written.
+
+    Deliberately not a similarity score with a threshold: the case this exists for
+    is the question being literally the note's body, and a threshold would be one
+    more knob to get wrong. Punctuation and case are stripped because the cleaned
+    body differs from the transcript by exactly that much.
+    """
+    if not left.strip() or not right.strip():
+        return False
+    keep = lambda text: "".join(  # noqa: E731 - one expression, used twice below
+        ch.lower() for ch in text if ch.isalnum() or ch.isspace()
+    ).split()
+    return keep(left) == keep(right)
 
 
 def _last_recall_offset(cfg: Config, book: str, chapter: int) -> int | None:

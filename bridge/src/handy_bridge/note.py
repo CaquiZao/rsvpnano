@@ -44,6 +44,14 @@ class NoteData:
     # reason as `answers`.
     recall_points: list[tuple[str, str, bool]] = field(default_factory=list)
     recall_missed: list[str] = field(default_factory=list)
+    # A avaliacao do raciocinio e o aprofundamento. Ficam separados da conferencia
+    # porque obedecem a regras de conhecimento diferentes: a conferencia julga so
+    # contra o texto, estes dois podem usar conhecimento de mundo -- e por isso
+    # carregam o aviso de nao verificado.
+    recall_reasoning: str = ""
+    recall_deepening: str = ""
+    recall_outside: bool = False
+    recall_no_passage: bool = False
 
 
 def slugify(text: str) -> str:
@@ -121,7 +129,9 @@ def render(note: NoteData) -> str:
         lines += [f"> {line}" for line in excerpt.splitlines()]
         lines.append("")
 
-    lines += render_recall(note.recall_points, note.recall_missed)
+    lines += render_recall(note.recall_points, note.recall_missed,
+                           note.recall_reasoning, note.recall_deepening,
+                           note.recall_outside, note.recall_no_passage)
 
     # Answers are content the user wants to read, so they render expanded — unlike the
     # raw transcript below, which is reference material and stays collapsed.
@@ -142,21 +152,55 @@ RAW_CALLOUT = "> [!note]- Transcrição original"
 
 RECALL_CALLOUT = "> [!success] Conferência do que você lembrou"
 RECALL_WARNING = "> *Conferência automática, não verificada.*"
+REASONING_CALLOUT = "> [!abstract] Como o seu raciocínio se sustentou"
+DEEPENING_CALLOUT = "> [!tip] Indo um pouco mais fundo"
+# A conferência julga contra o texto; estas duas partes usam conhecimento de
+# mundo, então o aviso delas é mais forte e diz de onde vem o risco.
+DISCUSSION_WARNING = "> *Avaliação automática, com conhecimento fora do livro. Não verificada.*"
+OUTSIDE_NOTE = (
+    "> Você falou de material que este trecho não cobre, então não há o que conferir "
+    "contra o texto. A avaliação abaixo olha o raciocínio."
+)
+# Motivo diferente, frase diferente: dizer que "o trecho não cobre" seria mentira
+# quando não houve trecho nenhum, e a diferença importa porque esta é acionável --
+# a âncora vem do sidecar da gravação.
+NO_PASSAGE_NOTE = (
+    "> Esta gravação chegou sem âncora de leitura, então não havia trecho para "
+    "conferir contra. A avaliação abaixo olha o raciocínio."
+)
 
 
 def render_recall(
-    points: list[tuple[str, str, bool]], missed: list[str]
+    points: list[tuple[str, str, bool]],
+    missed: list[str],
+    reasoning: str = "",
+    deepening: str = "",
+    outside: bool = False,
+    no_passage: bool = False,
 ) -> list[str]:
-    """Show what was said next to what the book says, with equal weight.
+    """Show what was said next to what the book says, then judge the thinking.
 
     Deliberately not a collapsed callout with only the corrected version on show.
     The vault is self-test material, so the mistake is the part worth finding
     again later — hiding it would optimise for reading and against remembering.
+
+    Three blocks, not one, because they answer different questions and rest on
+    different evidence. The conference asks "did I remember this right" and is
+    judged only against the passage. The reasoning and the deepening ask "does my
+    thinking hold up" and "what comes next", and those need knowledge from outside
+    the book — so they carry a stronger warning, and they are what remains useful
+    when the recollection is about material this passage never covered.
     """
-    if not points and not missed:
+    if not points and not missed and not reasoning.strip() and not deepening.strip():
         return []
 
-    lines = [RECALL_CALLOUT, ">"]
+    lines: list[str] = []
+    if outside and (reasoning.strip() or deepening.strip()):
+        lines += [NO_PASSAGE_NOTE if no_passage else OUTSIDE_NOTE, ""]
+    if not points and not missed:
+        return lines + _render_discussion(reasoning, deepening)
+
+    lines += [RECALL_CALLOUT, ">"]
     for said, actual, correct in points:
         if not said.strip():
             continue
@@ -172,6 +216,19 @@ def render_recall(
     # Same warning the answers carry, for the same reason: a correction that
     # arrives on its own is read with less scepticism than one you went looking for.
     lines += [RECALL_WARNING, ""]
+    return lines + _render_discussion(reasoning, deepening)
+
+
+def _render_discussion(reasoning: str, deepening: str) -> list[str]:
+    """The two blocks that judge the thinking rather than the memory."""
+    lines: list[str] = []
+    for callout, text in ((REASONING_CALLOUT, reasoning), (DEEPENING_CALLOUT, deepening)):
+        if not text.strip():
+            continue
+        lines.append(callout)
+        lines += [f"> {line}" for line in text.strip().splitlines()]
+        lines.append(">")
+        lines += [DISCUSSION_WARNING, ""]
     return lines
 
 

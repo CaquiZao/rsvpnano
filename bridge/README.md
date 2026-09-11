@@ -3,9 +3,12 @@
 Serviço local que recebe gravações do RSVP Nano, transcreve com o
 [Handy](https://github.com/cjpais/Handy) e escreve notas Markdown no vault do Obsidian.
 
-O áudio nunca sai da sua máquina: a transcrição roda localmente com o modelo Nemotron
-Streaming 3.5. Apenas o texto já transcrito é enviado ao passo de pós-processamento,
-e mesmo esse passo é plugável — veja [Pós-processamento](#pós-processamento).
+A **transcrição** nunca sai da sua máquina: ela roda localmente com o Nemotron, e
+nenhum serviço de nuvem recebe seu áudio para transcrever. Se você habilitar a rota de
+queda do Drive, o WAV das notas que não acharam o bridge na rede transita e repousa na
+**sua** conta Google até o bridge buscá-lo — legível por você e por quem tem acesso a
+essa conta. Apenas o texto já transcrito é enviado ao passo de pós-processamento, e
+mesmo esse passo é plugável — veja [Pós-processamento](#pós-processamento).
 
 ## Como funciona
 
@@ -32,7 +35,11 @@ encontra sem você configurar endereço IP em lugar nenhum.
 - Python 3.13+ e [uv](https://docs.astral.sh/uv/)
 - [Handy](https://github.com/cjpais/Handy) instalado, **com o modelo já baixado**
   (`--transcribe-file` não baixa modelo)
-- `claude` CLI no PATH, se você usar o pós-processamento padrão
+- `claude` CLI no PATH, se você usar o pós-processamento padrão. O PATH que importa é
+  o do processo que **subiu** o bridge: iniciá-lo de um shell com PATH enxuto (um
+  `Start-Process` sem o perfil, por exemplo) faz toda nota chegar sem título, sem
+  limpeza e sem recall, com `claude: not found` no log. Aqui ele mora em
+  `C:/Users/kakam/.local/bin`.
 
 ## Instalação
 
@@ -87,6 +94,113 @@ curl -X POST http://localhost:8787/v1/notes \
 
 O WAV precisa ser **PCM 16 kHz mono 16-bit** — é o que o device grava e o que o Handy
 exige. Para converter: `ffmpeg -i entrada.m4a -ar 16000 -ac 1 -c:a pcm_s16le nota.wav`.
+
+## Quando uma nota é recusada
+
+O `POST /v1/notes` responde `400` quando o meta não é JSON, quando o WAV não é
+utilizável, ou quando a gravação tem menos de um segundo. Nesses casos o áudio **não é
+apagado**: vai para `<audio_store>/rejected/`, e o motivo entra no log com o id da nota.
+
+A recusa é o momento em que a gravação vale mais, não menos. O device lê só a linha de
+status da resposta — de propósito, drenar o corpo custaria tempo de rádio — então um
+motivo que viaja apenas no JSON de resposta não chega a ninguém. E o device trata
+qualquer 4xx como definitivo, tirando a nota da fila. Enquanto as duas pontas
+descartavam a própria cópia, uma recusa apagava a gravação dos dois lados e ainda
+reportava sucesso na tela.
+
+Quando é o meta que está quebrado, os bytes exatos que o firmware enviou ficam ao lado
+do áudio num `<id>.meta.txt`. "Não é JSON válido" diz qual camada falhou e nada sobre
+como.
+
+Duas recusas acontecem **antes** do endpoint rodar: corpo que o parser não consegue ler
+(`400`) e formulário com campo faltando (`422`). Essas também vão para o log, com o
+`content-type` e o tamanho declarado do corpo, porque o que quebra nelas é o framing do
+multipart e não o conteúdo.
+
+No device, uma nota recusada é **estacionada** em vez de apagada: o `.wav` e o `.json`
+ganham o sufixo `.parked` em `/voice` no cartão, ficam fora da fila e nunca são
+varridos. A tela diz "Bridge recusou a nota" em vez de contar a recusa como entrega.
+
+## Quando a transcrição falha
+
+Uma gravação que chegou e **não** virou nota não é perdida. O worker guarda o áudio em
+`<audio_store>/failed/` junto de um `<id>.json` com o meta que veio com ela, o motivo da
+falha e quantas tentativas já teve; no Telegram chega um aviso dizendo o que quebrou e
+que o áudio está guardado. A cada vez que o bridge sobe, essas gravações são as
+primeiras a entrar na fila — depois de três tentativas ele desiste, avisa, e o `.wav`
+continua lá.
+
+Isso existe porque uma nota real foi perdida assim. Uma gravação de 1m48s chegou pelo
+Drive, estourou a memória da GPU durante a transcrição, e o worker registrou a exceção
+e seguiu adiante: a nota nunca existiu, nada tentou de novo, e nada disse isso. A cópia
+no Drive já tinha sido apagada e o `note_id` já estava na lista de processados — o que
+está correto, é o que impede a mesma gravação virar duas notas, mas não deixava caminho
+de volta.
+
+Um detalhe que parece contramão e não é: o `note_id` continua sendo marcado como
+processado **antes** de a nota ser escrita. O `submit` só enfileira, então marcar depois
+não protegeria de nada — a falha acontece mais tarde, no worker — e a marcação é o que
+impede a nota duplicada. O que faltava era o caminho de volta, não a ordem.
+
+Por isso também tudo que vem depois de a nota estar em disco é engolido com um aviso no
+log, inclusive registrar a thread do Telegram: o worker trata uma exceção como "esta
+gravação não produziu nada" e a estaciona, e uma exceção depois da escrita voltaria como
+uma segunda nota para a mesma gravação.
+
+## Qual GPU transcreve
+
+O buffer que o backend Vulkan aloca cresce com a **duração** do áudio, então uma placa
+pequena transcreve um minuto e morre em dois — com um crash sem mensagem legível
+(`exit 3221225477`), não com um erro de memória. Nesta máquina:
+
+| Índice | Dispositivo | Memória |
+|---|---|---|
+| 0 | GeForce MX110 | 2.256 MB |
+| 1 | Intel UHD 620 | 6.212 MB |
+| 2 | CPU i7-8565U | 12.168 MB |
+
+`device_indexes` em `[asr]` é a ordem em que os dispositivos são tentados, caindo para o
+próximo quando um morre. Aqui é `[1, 2]`: a MX110 é a menor das três e fica fora. Um
+*timeout* não cai para o próximo — o dispositivo seguinte é mais lento, então só faria a
+mesma espera durar mais. `handy.exe --list-devices` lista os índices com a memória de
+cada um.
+
+## Quando o bridge não está na rede
+
+O device tenta a LAN primeiro, sempre: só cai para o Google Drive quando nenhum bridge
+é encontrado por mDNS. É uma rota de emergência, não um caminho alternativo de uso
+normal — enquanto o bridge estiver na mesma rede, o Drive nunca entra em jogo.
+
+Habilitada em `[drive]` no `config.toml` — desligada por padrão, então quem só usa o
+bridge na própria rede não precisa criar projeto nenhum no Google Cloud. Para gerar as
+credenciais, preencha `client_id` e `client_secret` (de um projeto OAuth do Google
+Cloud) e rode:
+
+```bash
+uv run python -m handy_bridge.drive_auth --config config.toml
+```
+
+O comando abre o navegador para a tela de consentimento, troca o código pelo refresh
+token, imprime a linha `refresh_token = "..."` para colar no `[drive]` do
+`config.toml` do bridge, e escreve um `drive.toml` para copiar no device.
+
+O escopo pedido é `drive.file`: o bridge só alcança os arquivos que o próprio app
+criou, nunca o resto do seu Drive. Ele fica com um `DrivePoller` em background, que
+verifica a pasta configurada a cada `poll_s` segundos, baixa o par `.wav`+`.json` que
+achar, entrega para a mesma pipeline da rota HTTP e remove os dois arquivos do Drive.
+
+**Arquivo que sobra na pasta não é necessariamente lixo.** Uma gravação cujo stem
+colidiu com uma nota já entregue fica lá **de propósito**: o stem é o nome que o device
+escreveu, e sem relógio sincronizado ele reinicia em 0 a cada boot, então dois boots
+cunham o mesmo nome para gravações diferentes. O device já apagou a cópia dele quando o
+upload deu certo, então esse arquivo pode ser a **única cópia** daquela gravação. O
+bridge avisa no log a cada poll, com os nomes (`arquivos de note_id já processado na
+pasta do Drive: ...`) — **confira o log antes de esvaziar a pasta.**
+
+**A tela de consentimento OAuth do projeto Google Cloud precisa estar em "Published",
+não em "Testing".** Em Testing, o Google expira o refresh token em 7 dias — o bridge
+para de conseguir acesso novo sem aviso, e a rota de queda volta a falhar em
+silêncio até alguém reparar e refazer o consentimento.
 
 ## Testes
 
@@ -290,6 +404,36 @@ Um quadro por livro em `Livros/<livro>/Quadro.md`; notas gravadas fora da leitur
 para `Geral/Quadro.md`. Cada cartão linka de volta para a nota, então o contexto não
 se perde. O formato do arquivo foi extraído do código do plugin obsidian-kanban
 2.0.51, e a inserção é por linha — o bloco `%% kanban:settings` nunca é tocado.
+
+## O Telegram como registro do que chegou
+
+Toda nota que entra no vault é anunciada no seu Telegram — inclusive uma anotação simples,
+sem pergunta nenhuma. A mensagem diz o tipo, o título, a transcrição do que você falou e,
+num recall, a avaliação do raciocínio e o aprofundamento.
+
+**Sem o corpo limpo pelo LLM**, mesmo a nota tendo um. Ele é a mesma fala arrumada —
+`houveram` virando `houve`, a palavra marcadora removida —, então no celular ele lê como a
+transcrição impressa duas vezes. A nota se dá bem com os dois porque lá a crua fica num
+callout recolhido; uma mensagem de chat não tem onde recolher. Fica o que diz algo novo, e
+o polimento continua a um toque de distância no vault.
+
+Anunciar **toda** nota não é barulho, é o que torna o resto possível: o bridge lembra a
+qual nota cada mensagem pertence, e responder qualquer mensagem da conversa é fazer uma
+pergunta sobre aquela nota. Antes, o bot só falava quando havia resposta a entregar, então
+a maioria das notas nunca aparecia no celular — e uma nota que você não vê é uma nota
+sobre a qual você não consegue perguntar depois.
+
+A transcrição crua vem **depois** do conteúdo trabalhado, pela mesma razão que na nota ela
+fica num callout recolhido: é referência, que você lê quando a versão limpa parece errada.
+Transcrição longa é cortada, com aviso — a nota guarda a íntegra, e esta mensagem só
+precisa ser suficiente para você reconhecer de qual nota se trata.
+
+As respostas chegam **em seguida**, aninhadas sob o aviso, para a ordem na tela bater com
+a ordem em que as coisas aconteceram.
+
+A pergunta que você faz respondendo uma mensagem pode ser das duas coisas, e as duas
+valem: pedir que o bot esclareça uma resposta que ficou insuficiente, ou uma pergunta nova
+sobre a própria nota, feita dias depois.
 
 ## Respostas automáticas no Telegram
 

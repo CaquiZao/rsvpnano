@@ -42,17 +42,29 @@ namespace voice {
         // Empty until an upload fails; cleared on the next success.
         const char* lastError() const;
 
+        // Bumped once every time a flush finishes having had something to send. The
+        // notes screen reads its list straight from the card, so the list goes stale
+        // the instant a flush ends -- it showed a note that was already delivered, and
+        // the send button did nothing because the queue behind it was empty. This is
+        // how the screen learns to read the card again.
+        uint32_t flushGeneration() const;
+        // How many notes that flush actually delivered, for the line that says so.
+        size_t lastSentCount() const;
+
     private:
         static void taskEntry(void* self);
         void run();
         bool waitForRadio();
         void flushOnce();
+        void finish(size_t sent);
 
         SemaphoreHandle_t wake_ = nullptr;
         SemaphoreHandle_t lock_ = nullptr;
         Credentials credentials_;
         std::function<bool()> radioGate_;
         volatile size_t pendingCount_ = 0;
+        volatile uint32_t flushes_ = 0;
+        volatile size_t lastSent_ = 0;
         volatile bool busy_ = false;
         const char* lastError_ = nullptr;
     };

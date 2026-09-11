@@ -57,6 +57,77 @@ namespace {
         TEST_ASSERT_EQUAL(0, plan.sweep.size());
     }
 
+    // --- o que uma tentativa significa para a fila -------------------------
+
+    void test_a_delivered_recording_leaves_the_queue() {
+        TEST_ASSERT_EQUAL(static_cast<int>(voice::QueueAction::Delete),
+                          static_cast<int>(voice::actionFor(voice::UploadResult::Sent)));
+    }
+
+    void test_a_network_failure_keeps_the_recording_queued() {
+        TEST_ASSERT_EQUAL(static_cast<int>(voice::QueueAction::Keep),
+                          static_cast<int>(voice::actionFor(voice::UploadResult::Retry)));
+    }
+
+    void test_a_refused_recording_is_parked_rather_than_deleted() {
+        // A 4xx is the bridge's reading of the audio, and a bug in the bridge produces
+        // one just as easily as a real fault does. The recording cannot be rebuilt, so
+        // it outlives the refusal and the queue moves on without it.
+        TEST_ASSERT_EQUAL(static_cast<int>(voice::QueueAction::Park),
+                          static_cast<int>(voice::actionFor(voice::UploadResult::Rejected)));
+    }
+
+    void test_a_drive_upload_that_landed_leaves_the_queue() {
+        TEST_ASSERT_EQUAL(static_cast<int>(voice::QueueAction::Delete),
+                          static_cast<int>(voice::actionFor(voice::DriveResult::Sent)));
+    }
+
+    void test_a_rejected_drive_token_keeps_the_recording() {
+        // 401/403 do Drive fala do token, nunca da gravação. Estacionar diria
+        // que a nota é ruim; ela fica na fila e sobe quando o token for
+        // corrigido.
+        TEST_ASSERT_EQUAL(static_cast<int>(voice::QueueAction::Keep),
+                          static_cast<int>(voice::actionFor(voice::DriveResult::Unauthorized)));
+    }
+
+    void test_no_internet_keeps_the_recording() {
+        TEST_ASSERT_EQUAL(static_cast<int>(voice::QueueAction::Keep),
+                          static_cast<int>(voice::actionFor(voice::DriveResult::NoInternet)));
+    }
+
+    void test_a_transient_drive_failure_keeps_the_recording() {
+        TEST_ASSERT_EQUAL(static_cast<int>(voice::QueueAction::Keep),
+                          static_cast<int>(voice::actionFor(voice::DriveResult::Retry)));
+    }
+
+    // --- o nome de quem gravou sem relogio ---------------------------------
+
+    void test_the_boot_stamp_carries_the_sequence_then_the_uptime() {
+        TEST_ASSERT_EQUAL_STRING("boot-0007-00041020", voice::bootStamp(7, 41020).c_str());
+    }
+
+    void test_two_boots_never_produce_the_same_stamp() {
+        // A gravacao que custou horas de depuracao: millis() reinicia em 0, entao sem o
+        // contador dois audios diferentes recebiam o mesmo nome -- e o bridge deduplica
+        // exatamente por esse nome.
+        TEST_ASSERT_TRUE(voice::bootStamp(1, 500) != voice::bootStamp(2, 500));
+    }
+
+    void test_a_later_boot_always_sorts_after_an_earlier_one() {
+        // Mesmo quando o uptime da gravacao nova e menor: o contador vem primeiro.
+        TEST_ASSERT_TRUE(voice::bootStamp(1, 99999999) < voice::bootStamp(2, 0));
+    }
+
+    void test_within_one_boot_the_uptime_still_orders() {
+        TEST_ASSERT_TRUE(voice::bootStamp(3, 100) < voice::bootStamp(3, 200));
+    }
+
+    void test_boot_stamps_stay_clustered_apart_from_clock_stamps() {
+        // Nao se misturam com os nomes com relogio; ficam todos juntos em um bloco.
+        TEST_ASSERT_TRUE(voice::bootStamp(1, 0) > std::string("20260101-000000"));
+        TEST_ASSERT_TRUE(voice::bootStamp(9999, 99999999) > std::string("29991231-235959"));
+    }
+
     // --- o que é lixo ------------------------------------------------------
 
     void test_a_sidecar_without_its_recording_is_swept() {
@@ -113,6 +184,18 @@ int main(int, char**) {
     RUN_TEST(test_the_queue_is_ordered_oldest_first);
     RUN_TEST(test_a_recording_without_a_sidecar_is_still_pending);
     RUN_TEST(test_a_parked_recording_is_neither_pending_nor_swept);
+    RUN_TEST(test_a_delivered_recording_leaves_the_queue);
+    RUN_TEST(test_a_network_failure_keeps_the_recording_queued);
+    RUN_TEST(test_a_refused_recording_is_parked_rather_than_deleted);
+    RUN_TEST(test_a_drive_upload_that_landed_leaves_the_queue);
+    RUN_TEST(test_a_rejected_drive_token_keeps_the_recording);
+    RUN_TEST(test_no_internet_keeps_the_recording);
+    RUN_TEST(test_a_transient_drive_failure_keeps_the_recording);
+    RUN_TEST(test_the_boot_stamp_carries_the_sequence_then_the_uptime);
+    RUN_TEST(test_two_boots_never_produce_the_same_stamp);
+    RUN_TEST(test_a_later_boot_always_sorts_after_an_earlier_one);
+    RUN_TEST(test_within_one_boot_the_uptime_still_orders);
+    RUN_TEST(test_boot_stamps_stay_clustered_apart_from_clock_stamps);
     RUN_TEST(test_a_sidecar_without_its_recording_is_swept);
     RUN_TEST(test_a_leftover_temporary_is_swept);
     RUN_TEST(test_an_unrelated_file_is_left_alone);

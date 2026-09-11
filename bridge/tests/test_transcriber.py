@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 
@@ -6,8 +7,13 @@ from handy_bridge.config import AsrConfig
 from handy_bridge.transcriber import Transcription, TranscriptionError, transcribe
 
 
-def cfg(tmp_path) -> AsrConfig:
-    return AsrConfig(handy_exe=tmp_path / "handy.exe", model="m/model.gguf", timeout_s=900)
+def cfg(tmp_path, devices=()) -> AsrConfig:
+    return AsrConfig(
+        handy_exe=tmp_path / "handy.exe",
+        model="m/model.gguf",
+        timeout_s=900,
+        device_indexes=devices,
+    )
 
 
 class FakeCompleted:
@@ -98,3 +104,69 @@ def test_raises_when_text_key_absent(tmp_path):
             cfg(tmp_path),
             runner=lambda cmd, timeout: FakeCompleted('{"audio_secs": 1.0}'),
         )
+
+
+def test_no_device_flag_when_none_configured(tmp_path):
+    """An unset device list keeps Handy picking for itself, as it always did."""
+    seen = {}
+
+    def runner(cmd, timeout):
+        seen["cmd"] = cmd
+        return FakeCompleted(HANDY_OUT)
+
+    transcribe(tmp_path / "a.wav", cfg(tmp_path), runner=runner)
+    assert "--device-index" not in seen["cmd"]
+
+
+def test_first_device_is_asked_first(tmp_path):
+    seen = []
+
+    def runner(cmd, timeout):
+        seen.append(cmd)
+        return FakeCompleted(HANDY_OUT)
+
+    transcribe(tmp_path / "a.wav", cfg(tmp_path, devices=(1, 2)), runner=runner)
+    assert len(seen) == 1
+    assert seen[0][seen[0].index("--device-index") + 1] == "1"
+
+
+def test_a_crashed_device_falls_to_the_next(tmp_path):
+    """The real failure: the 2GB GPU dies on a long recording, the 6GB one does not.
+
+    Exit 3221225477 is the Windows access violation ggml leaves behind when a
+    Vulkan buffer allocation fails, so there is no tidy 'out of memory' to match
+    on -- any dead process is reason enough to ask the next device.
+    """
+    seen = []
+
+    def runner(cmd, timeout):
+        seen.append(cmd[cmd.index("--device-index") + 1])
+        if seen[-1] == "0":
+            return FakeCompleted("", 3221225477, "ggml_vulkan: Device memory allocation failed")
+        return FakeCompleted(HANDY_OUT)
+
+    got = transcribe(tmp_path / "a.wav", cfg(tmp_path, devices=(0, 1)), runner=runner)
+    assert got.text == "ola mundo"
+    assert seen == ["0", "1"]
+
+
+def test_every_device_failing_raises_the_last_error(tmp_path):
+    with pytest.raises(TranscriptionError, match="exit code 3221225477"):
+        transcribe(
+            tmp_path / "a.wav",
+            cfg(tmp_path, devices=(0, 1)),
+            runner=lambda cmd, timeout: FakeCompleted("", 3221225477, "boom"),
+        )
+
+
+def test_a_timeout_does_not_try_another_device(tmp_path):
+    """A slower device would only time out later. One wait is the whole budget."""
+    seen = []
+
+    def runner(cmd, timeout):
+        seen.append(cmd)
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    with pytest.raises(TranscriptionError, match="timed out"):
+        transcribe(tmp_path / "a.wav", cfg(tmp_path, devices=(0, 1, 2)), runner=runner)
+    assert len(seen) == 1

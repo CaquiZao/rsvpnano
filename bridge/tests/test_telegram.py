@@ -1,6 +1,12 @@
 import pytest
 
-from handy_bridge.telegram import TelegramError, TelegramSender, build_message
+from handy_bridge.telegram import (
+    MAX_MESSAGE_CHARS,
+    TelegramError,
+    TelegramSender,
+    build_failure,
+    build_message,
+)
 
 
 class FakeResponse:
@@ -106,3 +112,103 @@ def test_poll_passes_the_offset_so_updates_are_not_reprocessed():
     TelegramSender("t", "c", poster=poster).poll(offset=99)
     assert seen["offset"] == 99
     assert seen["url"].endswith("/getUpdates")
+
+
+# --- aviso de chegada -------------------------------------------------------
+
+
+def test_build_arrival_names_the_kind_and_the_title():
+    from handy_bridge.telegram import build_arrival
+
+    got = build_arrival("recall", "Tres revolucoes", "o que eu falei")
+    assert got.startswith("🔁 Recall — Tres revolucoes")
+    assert "o que eu falei" in got
+
+
+def test_build_arrival_does_not_repeat_the_transcript_as_a_cleaned_body():
+    from handy_bridge.telegram import build_arrival
+
+    # O corpo limpo e a mesma fala arrumada, e no celular nao ha como recolher
+    # nada: mandar os dois faz a pessoa ler a mesma coisa duas vezes.
+    got = build_arrival("recall", "T", "houveram tres revolucoes")
+    assert got.count("houveram tres revolucoes") == 1
+
+
+def test_build_arrival_puts_the_transcript_after_the_discussion():
+    from handy_bridge.telegram import build_arrival
+
+    got = build_arrival("recall", "T", "FALADO", reasoning="RACIOCINIO")
+    # A transcricao e referencia: vem depois do que foi trabalhado, como na nota.
+    assert got.index("RACIOCINIO") < got.index("FALADO")
+
+
+def test_build_arrival_carries_the_recall_discussion():
+    from handy_bridge.telegram import build_arrival
+
+    got = build_arrival(
+        "recall", "T", "falado",
+        reasoning="Seu instinto acertou a aceleracao.",
+        deepening="A Belle Epoque foi o apice.",
+    )
+    assert "Seu instinto acertou" in got
+    assert "Belle Epoque" in got
+
+
+def test_build_arrival_cuts_a_long_transcript_and_says_so():
+    from handy_bridge.telegram import MAX_TRANSCRIPT_CHARS, build_arrival
+
+    got = build_arrival("anotação", "T", "x" * (MAX_TRANSCRIPT_CHARS + 500))
+    assert "transcrição cortada" in got
+    assert len(got) < MAX_TRANSCRIPT_CHARS + 400
+
+
+def test_build_arrival_warns_that_answers_are_coming():
+    from handy_bridge.telegram import build_arrival
+
+    um = build_arrival("pergunta", "T", "f", answers_coming=1)
+    dois = build_arrival("pergunta", "T", "f", answers_coming=2)
+    assert "1 resposta chegando" in um
+    assert "2 respostas chegando" in dois
+    # Sem resposta a caminho, nada de promessa que nao se cumpre.
+    assert "chegando" not in build_arrival("anotação", "T", "f")
+
+
+def test_build_message_without_a_question_renders_answer_only():
+    from handy_bridge.telegram import build_message
+
+    # Acontece quando a pergunta era a gravacao inteira: o aviso de chegada acabou
+    # de mostrar aquele texto, e repeti-lo na resposta imprime a fala duas vezes.
+    got = build_message("", "A resposta.", "Sapiens")
+    assert "❓" not in got
+    assert got.startswith("A resposta.")
+    assert "📖 Sapiens" in got
+
+
+def test_build_message_keeps_a_real_question():
+    from handy_bridge.telegram import build_message
+
+    got = build_message("O que foi o Big Bang?", "O evento inicial.", None)
+    assert got.startswith("❓ O que foi o Big Bang?")
+
+
+def test_failure_notice_says_what_broke_and_that_it_will_retry():
+    text = build_failure(
+        "boot-0004-00033920", "Handy failed with exit code 3221225477", 1, will_retry=True
+    )
+    assert "boot-0004-00033920" in text
+    assert "3221225477" in text
+    # The point of the message: the recording still exists.
+    assert "guardado" in text.lower()
+    assert "de novo" in text.lower()
+
+
+def test_failure_notice_stops_promising_a_retry_once_it_gave_up():
+    text = build_failure("boot-0004-00033920", "sem VRAM", 3, will_retry=False)
+    assert "de novo" not in text.lower()
+    assert "3" in text
+    assert "guardado" in text.lower()
+
+
+def test_failure_notice_trims_a_giant_reason():
+    text = build_failure("n1", "x" * 5000, 1, will_retry=True)
+    assert len(text) < MAX_MESSAGE_CHARS

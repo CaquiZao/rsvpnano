@@ -25,10 +25,108 @@ class TelegramError(Exception):
 
 
 def build_message(question: str, answer: str, book: str | None) -> str:
-    lines = [f"❓ {question.strip()}", "", answer.strip(), ""]
+    """The answer to one question, as a reply under the note's arrival notice.
+
+    An empty question renders answer-only, and the caller passes one when the
+    question is just the whole recording again. That happens for a `pergunta`
+    note where no specific question could be extracted: the fallback asks the
+    model about the entire body, so echoing it here would reprint the transcript
+    the arrival notice showed a second earlier.
+    """
+    lines = []
+    if question.strip():
+        lines += [f"❓ {question.strip()}", ""]
+    lines += [answer.strip(), ""]
     if book:
         lines.append(f"📖 {book}")
     lines.append(WARNING)
+    return "\n".join(lines)
+
+
+# One line per kind, because "chegou uma nota" says less than the phone screen
+# has room for. The label is also what tells you whether to wait for more.
+KIND_HEADERS = {
+    "anotação": "📝 Anotação",
+    "pergunta": "❓ Pergunta",
+    "recall": "🔁 Recall",
+}
+# A ten-minute recording is a wall of text on a phone. The note keeps the whole
+# transcript; this message only has to be enough to recognise which note it is.
+MAX_TRANSCRIPT_CHARS = 900
+
+
+def build_arrival(
+    kind: str,
+    title: str,
+    transcript: str,
+    book: str | None = None,
+    reasoning: str = "",
+    deepening: str = "",
+    answers_coming: int = 0,
+) -> str:
+    """Announce a note that just landed in the vault, with what it says.
+
+    Deliberately without the LLM-cleaned body, even though the note has it. The
+    cleaned version is the same words tidied -- `houveram` to `houve`, the spoken
+    marker word removed -- so on a phone it reads as the transcript printed twice.
+    The note gets away with carrying both because the raw one sits in a collapsed
+    callout; a chat message has nowhere to collapse it to.
+
+    What survives is what says something new: the title, the discussion of the
+    thinking, and the words you actually spoke. The polish is one tap away in the
+    vault.
+    """
+    header = KIND_HEADERS.get(kind.strip().lower(), "📝 Nota")
+    lines = [f"{header} — {title.strip()}" if title.strip() else header, ""]
+
+    for label, text in (("🧠 Seu raciocínio", reasoning), ("💡 Indo mais fundo", deepening)):
+        if text.strip():
+            lines += [f"{label}: {text.strip()}", ""]
+
+    spoken = transcript.strip()
+    if spoken:
+        if len(spoken) > MAX_TRANSCRIPT_CHARS:
+            spoken = spoken[:MAX_TRANSCRIPT_CHARS].rstrip() + "… (transcrição cortada)"
+        lines += [f"🎙️ {spoken}", ""]
+
+    if book:
+        lines.append(f"📖 {book}")
+    if answers_coming:
+        plural = "s" if answers_coming > 1 else ""
+        lines.append(f"⏳ {answers_coming} resposta{plural} chegando em seguida.")
+    lines.append(WARNING)
+    return "\n".join(lines)
+
+
+MAX_REASON_CHARS = 300
+
+
+def build_failure(note_id: str, reason: str, attempts: int, will_retry: bool) -> str:
+    """Say that a recording arrived and did not become a note.
+
+    The message this replaces was a line in a log file nobody was reading, and
+    the note simply never appeared -- the same silence the whole voice path
+    started out with. What matters on the phone is that the audio still exists,
+    so that comes before the reason.
+    """
+    trimmed = reason.strip()
+    if len(trimmed) > MAX_REASON_CHARS:
+        trimmed = trimmed[:MAX_REASON_CHARS].rstrip() + "…"
+
+    lines = ["⚠️ Uma gravação chegou e não virou nota", "", f"🎙️ {note_id}"]
+    if trimmed:
+        lines.append(f"💥 {trimmed}")
+    lines.append("")
+    if will_retry:
+        lines.append(
+            f"O áudio está guardado (tentativa {attempts}). "
+            "Vou tentar de novo quando o bridge reiniciar."
+        )
+    else:
+        lines.append(
+            f"Desisti depois de {attempts} tentativas. O áudio está guardado na "
+            "pasta 'failed' do bridge — nada foi apagado."
+        )
     return "\n".join(lines)
 
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 
 namespace voice {
 
@@ -36,6 +37,32 @@ namespace voice {
 
     } // namespace
 
+    QueueAction actionFor(UploadResult result) {
+        switch (result) {
+        case UploadResult::Retry:
+            return QueueAction::Keep;
+        case UploadResult::Rejected:
+            return QueueAction::Park;
+        case UploadResult::Sent:
+            break;
+        }
+        return QueueAction::Delete;
+    }
+
+    QueueAction actionFor(DriveResult result) {
+        switch (result) {
+        case DriveResult::Sent:
+            return QueueAction::Delete;
+        case DriveResult::Retry:
+        case DriveResult::Unauthorized:
+        case DriveResult::NoInternet:
+            break;
+        }
+        // Nenhuma falha do Drive estaciona: estacionar afirma que a gravação
+        // não serve, e o Drive nunca disse isso -- ele nem a olhou.
+        return QueueAction::Keep;
+    }
+
     bool isRecordingName(std::string_view name) {
         const std::string lower = lowered(name);
         // A bare ".wav" has no stem to pair a sidecar with, so it is not a recording.
@@ -46,6 +73,16 @@ namespace voice {
         std::string out(stamp);
         out += kWavExt;
         return out;
+    }
+
+    std::string bootStamp(uint32_t bootSeq, uint32_t bootMs) {
+        // Fixed widths on purpose: lexical order is the only order this queue has, so
+        // both fields have to compare as numbers do. Four digits of sequence is decades
+        // of power cycles, and eight of uptime is 27 hours -- longer than a battery.
+        char buffer[32] = {};
+        std::snprintf(buffer, sizeof(buffer), "boot-%04lu-%08lu",
+                      static_cast<unsigned long>(bootSeq), static_cast<unsigned long>(bootMs));
+        return buffer;
     }
 
     std::string parkedName(std::string_view wavName) {

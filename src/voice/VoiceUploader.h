@@ -28,12 +28,6 @@ namespace voice {
     // service announces itself so there is no address to configure anywhere.
     std::optional<Endpoint> discoverBridge(uint32_t timeoutMs = 3000);
 
-    enum class UploadResult : uint8_t {
-        Sent,     // the bridge has the audio; drop it from the queue
-        Retry,    // network or 5xx; keep it and try later
-        Rejected, // 4xx; the bridge will never accept this, so stop asking
-    };
-
     UploadResult upload(fs::FS& fs, const Endpoint& endpoint, const QueueEntry& entry);
 
 } // namespace voice

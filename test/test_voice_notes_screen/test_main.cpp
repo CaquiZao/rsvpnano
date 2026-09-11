@@ -72,6 +72,23 @@ namespace {
         TEST_ASSERT_EQUAL_INT16(320, view.w);
     }
 
+    // --- confirmacao de envio -----------------------------------------------
+
+    void test_one_note_sent_is_singular() {
+        TEST_ASSERT_EQUAL_STRING("1 nota enviada", screens::sentNotice(1).c_str());
+    }
+
+    void test_several_notes_sent_are_plural() {
+        TEST_ASSERT_EQUAL_STRING("3 notas enviadas", screens::sentNotice(3).c_str());
+    }
+
+    void test_nothing_sent_says_nothing() {
+        // A flush that delivered nothing has no good news to report, and the error
+        // line is what explains why. Claiming "0 notas enviadas" would read as a
+        // result when it is the absence of one.
+        TEST_ASSERT_EQUAL_STRING("", screens::sentNotice(0).c_str());
+    }
+
 } // namespace
 
 int main(int, char**) {
@@ -88,5 +105,8 @@ int main(int, char**) {
     RUN_TEST(test_a_panel_too_short_for_both_gives_the_list_nothing);
     RUN_TEST(test_the_viewport_never_has_negative_height);
     RUN_TEST(test_the_viewport_keeps_the_full_width_and_origin);
+    RUN_TEST(test_one_note_sent_is_singular);
+    RUN_TEST(test_several_notes_sent_are_plural);
+    RUN_TEST(test_nothing_sent_says_nothing);
     return UNITY_END();
 }

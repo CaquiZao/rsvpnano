@@ -14,6 +14,8 @@ import uvicorn
 from handy_bridge.config import ConfigError, load_config
 from handy_bridge.digest import DigestScheduler, DigestState
 from handy_bridge.discovery import AddressWatcher
+from handy_bridge.drive import Drive
+from handy_bridge.drive_poller import DrivePoller, ProcessedIds
 from handy_bridge.postprocess import build as build_processor
 from handy_bridge.server import create_app
 from handy_bridge.listener import TelegramListener
@@ -101,12 +103,37 @@ def main(argv: list[str] | None = None) -> int:
     worker = NoteWorker(cfg, processor, telegram=telegram, threads=threads)
     worker.start()
 
+    # Before anything new arrives, so a recording that failed last time is the
+    # first thing tried rather than the last. This is the way back for a note
+    # whose transcription died: the copy on Drive is already gone and the
+    # note_id is already in the processed list, so nothing else would retry it.
+    recovered = worker.retry_parked()
+    if recovered:
+        logging.getLogger(__name__).info(
+            "%d gravação(ões) que falharam antes foram reenfileiradas", recovered
+        )
+
+    drive_poller = None
+    # One store for both entrances. A recording can arrive twice -- the Drive
+    # upload confirms the WAV, fails on the sidecar, and the next flush finds
+    # the bridge on the LAN -- and the note_id POST /v1/notes records here is
+    # what stops the copy left on Drive from becoming a second note in the
+    # vault. Only the Drive route ever reads it, so it is only built when the
+    # fallback is on; with it off, create_app keeps nothing.
+    drive_seen = ProcessedIds(cfg.audio_store / "drive-seen.json") if cfg.drive.enabled else None
+    if cfg.drive.enabled:
+        drive_poller = DrivePoller(cfg, Drive(cfg.drive), worker.submit, drive_seen)
+        drive_poller.start()
+        logging.getLogger(__name__).info(
+            "Drive fallback enabled, polling every %ds", cfg.drive.poll_s
+        )
+
     # Watches the address rather than announcing once: the laptop moves between
     # networks and the old announcement would send the device to the wrong router.
     announcer = AddressWatcher(cfg.port)
     announcer.start()
 
-    app = create_app(cfg, submit=worker.submit)
+    app = create_app(cfg, submit=worker.submit, processed=drive_seen)
     try:
         uvicorn.run(app, host="0.0.0.0", port=cfg.port, log_config=None)
     finally:
@@ -115,6 +142,8 @@ def main(argv: list[str] | None = None) -> int:
         if listener is not None:
             listener.stop()
         announcer.stop()
+        if drive_poller is not None:
+            drive_poller.stop()
         worker.stop()
     return 0
 

@@ -22,6 +22,11 @@ namespace screens {
         bool playing = false; // a note is being played back
         size_t selected = 0;
         const char* error = nullptr;
+        // What the last finished flush delivered, e.g. "1 nota enviada". Empty most
+        // of the time. Without it, a successful send looks identical to a broken
+        // button: the queue empties, so the send button correctly goes dead, and
+        // nothing on screen says anything happened.
+        std::string notice;
     };
 
     // A recording is named after the moment it was taken, so the list can be labelled
@@ -31,6 +36,10 @@ namespace screens {
     // "17s", "1m20s". Bytes mean nothing to a reader; seconds are what tells one note
     // from another at a glance.
     std::string formatDuration(uint32_t durationMs);
+
+    // "1 nota enviada", "3 notas enviadas", and nothing at all for zero: a flush that
+    // delivered nothing has no good news, and the error line is what explains why.
+    std::string sentNotice(size_t sent);
 
     // The strip the list scrolls in: whatever the header and the button row do not
     // need. The controls are laid out first on purpose. Letting the list take the

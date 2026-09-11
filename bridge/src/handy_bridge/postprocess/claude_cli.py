@@ -70,22 +70,42 @@ ANSWER_PROMPT = (
 )
 
 RECALL_PROMPT = (
-    "Alguém está lendo um livro e acabou de falar em voz alta o que entendeu, para "
-    "conferir se entendeu e se lembrou certo. Compare o que a pessoa disse com o "
-    "trecho do livro que ela leu.\n"
+    "Alguém está lendo um livro, parou e falou em voz alta o que lembrou e o que pensou. "
+    "Sua tarefa tem TRÊS PARTES, com REGRAS DE CONHECIMENTO DIFERENTES. Não misture as "
+    "regras entre as partes.\n"
     "Responda APENAS com um objeto JSON válido, sem cercas de código, no formato "
     '{"points": array de {"said": string, "actual": string, "correct": boolean}, '
-    '"missed": array de strings}.\n'
-    '"points" tem uma entrada por afirmação que a pessoa fez. "said" resume a '
-    'afirmação dela em uma frase curta. "correct" é true quando a afirmação bate com '
-    'o trecho. Quando "correct" é false, "actual" diz em uma frase o que o trecho '
-    'de fato afirma; quando é true, deixe "actual" vazio.\n'
-    '"missed" lista o que o trecho traz de importante e a pessoa não mencionou, no '
-    "máximo três itens, cada um em uma frase curta.\n"
-    "Julgue apenas contra o trecho fornecido, nunca contra conhecimento externo: se "
-    "o trecho não permite decidir, trate a afirmação como correta. Acusar erro que "
-    "não houve é pior que deixar passar, porque a pessoa para de confiar na "
-    "conferência.\n"
+    '"missed": array de strings, "reasoning": string, "deepening": string, '
+    '"outside_passage": boolean}.\n'
+    "\n"
+    "PARTE 1 - CONFERENCIA DA MEMORIA (\"points\" e \"missed\").\n"
+    'Uma entrada em "points" por afirmação factual que a pessoa fez sobre o texto. "said" '
+    'resume a afirmação em uma frase curta. "correct" é true quando ela bate com o trecho. '
+    'Quando é false, "actual" diz em uma frase o que o trecho de fato afirma; quando é true, '
+    'deixe "actual" vazio. "missed" lista no máximo três coisas importantes do trecho que a '
+    "pessoa não mencionou.\n"
+    "AQUI, JULGUE SOMENTE CONTRA O TRECHO FORNECIDO, nunca contra conhecimento externo. Se o "
+    "trecho não permite decidir, trate a afirmação como correta. Acusar erro que não houve é "
+    "pior que deixar passar, porque é o que faz a pessoa parar de confiar na conferência.\n"
+    "\n"
+    "PARTE 2 - AVALIACAO DO RACIOCINIO (\"reasoning\").\n"
+    "Avalie o PROCESSO DE PENSAMENTO, não a memória: a inferência se sustenta? onde ela "
+    "escorrega, e POR QUÊ? Quando a pessoa errou, diga primeiro o que o instinto dela "
+    "acertou e só depois onde ele falhou - quase sempre há um acerto dentro do erro, e é ele "
+    "que faz a correção grudar. Se ela confundiu duas coisas parecidas, nomeie a distinção "
+    "que resolve a confusão. Escreva em segunda pessoa. No máximo 130 palavras.\n"
+    "\n"
+    "PARTE 3 - APROFUNDAMENTO (\"deepening\").\n"
+    "Estenda o que a pessoa falou: de três a cinco frases com o que ela ficaria feliz de "
+    "saber em seguida, no fio que ela mesma puxou. AQUI conhecimento de mundo é permitido e "
+    "esperado - é o que torna esta parte útil. Não repita a Parte 2 nem a conferência. "
+    "Escreva em segunda pessoa. No máximo 130 palavras.\n"
+    "\n"
+    'QUANDO O TRECHO NAO COBRE O ASSUNTO: ponha "outside_passage" como true e deixe "points" '
+    'e "missed" VAZIOS. Isso acontece quando a pessoa recorda algo que leu antes, ou a '
+    "moldura geral do livro, e não o trecho atual. Conferir memória contra um texto que não "
+    "trata do assunto só produz acusação falsa. As Partes 2 e 3 continuam valendo "
+    "normalmente: é justamente aí que elas passam a ser o valor inteiro da conferência.\n"
 )
 
 CHAPTER_SUMMARY_PROMPT = (
@@ -118,12 +138,17 @@ BOOK_SUMMARY_PROMPT = (
 )
 
 FOLLOWUP_PROMPT = (
-    "Você está esclarecendo uma dúvida de alguém que está lendo um livro e que "
-    "achou a resposta anterior insuficiente. "
+    "Alguém está lendo um livro e registra notas de voz. Abaixo vem uma nota dele e, "
+    "quando houver, as perguntas e respostas que já trocaram sobre ela. Responda à "
+    "pergunta nova.\n"
     "Responda APENAS com um objeto JSON válido, sem cercas de código, no formato "
     '{"answer": string}.\n'
+    "A pergunta pode ser duas coisas diferentes, e as duas são legítimas: pedir que "
+    "você esclareça uma resposta anterior que ficou insuficiente, ou uma pergunta nova "
+    "sobre a própria nota, feita horas ou dias depois. Não presuma que a pessoa está "
+    "reclamando de algo: atenda o que ela perguntou.\n"
     "A resposta deve ter NO MÁXIMO 150 palavras, ser direta e atacar exatamente o que "
-    "ficou obscuro. Não repita o que já foi dito antes. Não comece com introduções. "
+    "foi perguntado. Não repita o que já foi dito antes. Não comece com introduções. "
     "Se não souber com segurança, diga isso em uma frase em vez de especular.\n"
 )
 
@@ -305,14 +330,27 @@ class ClaudeCliProcessor:
         return answers
 
     def check_recall(self, spoken: str, passage: str) -> RecallCheck:
-        """Compare what was said against what was read, in one call."""
-        if not spoken.strip() or not passage.strip():
+        """Judge the recollection and the thinking behind it, in one call.
+
+        Runs without a passage on purpose. Only Part 1 needs one; Parts 2 and 3
+        judge the reasoning and extend it, and were written to use knowledge from
+        outside the book. A recording that arrived with no reading anchor used to
+        produce nothing at all here, so what reached the phone was the transcript
+        and not one word about it.
+        """
+        if not spoken.strip():
             return RecallCheck()
 
+        no_passage = not passage.strip()
+        read = (
+            "\nTrecho lido: NENHUM - esta gravação chegou sem âncora de leitura, então a "
+            'PARTE 1 não se aplica: ponha "outside_passage" como true e deixe "points" e '
+            '"missed" vazios. Faça as Partes 2 e 3 normalmente, que é todo o valor aqui.\n'
+            if no_passage
+            else f"\nTrecho lido:\n{passage}\n"
+        )
         payload = self._run(
-            RECALL_PROMPT
-            + f"\nTrecho lido:\n{passage}\n"
-            + f"\nO que a pessoa disse:\n{spoken}\n"
+            RECALL_PROMPT + read + f"\nO que a pessoa disse:\n{spoken}\n"
         )
 
         points: list[RecallPoint] = []
@@ -335,7 +373,21 @@ class ClaudeCliProcessor:
             for item in (payload.get("missed") or [])
             if str(item).strip()
         ]
-        return RecallCheck(points=points, missed=missed[:3])
+        # Fora do trecho a conferencia factual nao tem contra o que julgar: o modelo
+        # foi instruido a esvazia-la, e aqui isso e imposto em vez de pedido.
+        # Sem trecho a regra e a mesma e nao depende do modelo obedecer: nao ha
+        # contra o que conferir, entao a conferencia cai aqui de qualquer forma.
+        outside = bool(payload.get("outside_passage", False)) or no_passage
+        if outside:
+            points, missed = [], []
+        return RecallCheck(
+            points=points,
+            missed=missed[:3],
+            reasoning=str(payload.get("reasoning", "")).strip(),
+            deepening=str(payload.get("deepening", "")).strip(),
+            outside_passage=outside,
+            no_passage=no_passage,
+        )
 
     def summarize_chapter(self, entries: list[str]) -> str:
         """Write the chapter synthesis from the recorded lines, in one call."""
@@ -369,7 +421,12 @@ class ClaudeCliProcessor:
         if history:
             parts.append("\nConversa até agora:\n")
             for asked, replied in history:
-                parts.append(f"P: {asked}\nR: {replied}\n")
+                # Uma entrada sem pergunta é a própria nota, semeada quando o aviso
+                # de chegada foi enviado -- não uma resposta que alguém deu.
+                if asked.strip():
+                    parts.append(f"P: {asked}\nR: {replied}\n")
+                else:
+                    parts.append(f"A nota diz:\n{replied}\n")
         parts.append(f"\nNova pergunta:\n{question}\n")
 
         payload = self._run("".join(parts))
