@@ -1,6 +1,14 @@
 # Local configuration with absolute machine paths — copy from config.example.toml
 config.toml
 
+# Segredos. drive.toml guarda client_id, client_secret e refresh_token do Google
+# em texto puro, e é copiado para /config/drive.toml no cartão SD do dispositivo.
+# consent.out é a saída do fluxo de consentimento OAuth.
+drive.toml
+consent.out
+*.token
+*.secret
+
 .venv/
 __pycache__/
 .pytest_cache/
