@@ -112,7 +112,7 @@ def _require(table: dict, key: str, where: str):
 
 def load_config(path: Path) -> Config:
     try:
-        raw = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+        raw = tomllib.loads(Path(path).read_text(encoding="utf-8-sig"))
     except FileNotFoundError as exc:
         raise ConfigError(f"config file not found: {path}") from exc
     except tomllib.TOMLDecodeError as exc:

@@ -247,3 +247,15 @@ def test_drive_enabled_without_folder_id_is_an_error(tmp_path):
             tmp_path,
             extra='[drive]\nenabled = true\nclient_id = "c"\nclient_secret = "s"\nrefresh_token = "r"\n',
         )
+
+
+def test_accepts_utf8_bom(tmp_path):
+    # O PowerShell grava BOM ao editar o arquivo; em 12/09 isso derrubou o
+    # bridge por dias em loop de reinicio. O BOM nao pode invalidar o config.
+    vault = tmp_path / "Reading"
+    vault.mkdir()
+    body = BASE.format(vault=vault.as_posix(), store=(tmp_path / "audio").as_posix())
+    p = tmp_path / "config.toml"
+    p.write_text(body, encoding="utf-8-sig")
+    cfg = load_config(p)
+    assert cfg.vault_path == vault
