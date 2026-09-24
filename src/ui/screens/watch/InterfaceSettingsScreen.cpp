@@ -45,6 +45,7 @@ namespace screens {
         const UiText kind = config.screensaver == standby::Kind::maze      ? UiText::Maze
                           : config.screensaver == standby::Kind::voronoi   ? UiText::Voronoi
                           : config.screensaver == standby::Kind::reaction  ? UiText::Reaction
+                          : config.screensaver == standby::Kind::matrix    ? UiText::Matrix
                           : config.screensaver == standby::Kind::screenOff ? UiText::ScreenOff
                                                                            : UiText::Life;
         if (watch::setting(ui, grid.item(4), UiText::Screensaver, ui.text(kind))) {

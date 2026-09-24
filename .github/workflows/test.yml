@@ -56,6 +56,7 @@ jobs:
         run: |
           python localization/generate_localization.py --check
           python localization/generate_locale_packs.py --check
+          python fonts/generate_matrix_atlas.py --check
           python -m unittest localization/test_locale_packs.py
           python -m unittest discover -s fonts -p "test_*.py"
 

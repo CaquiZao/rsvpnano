@@ -387,6 +387,7 @@ object NanoSettingsSchema {
     const val SCREENSAVER_VORONOI = "voronoi"
     const val SCREENSAVER_SCREEN_OFF = "screenOff"
     const val SCREENSAVER_REACTION = "reaction"
+    const val SCREENSAVER_MATRIX = "matrix"
     const val TYPEFACE_DEFAULT = "literata"
 
     const val WPM_MIN = 10
@@ -433,7 +434,8 @@ object NanoSettingsSchema {
             SCREENSAVER_MAZE,
             SCREENSAVER_VORONOI,
             SCREENSAVER_SCREEN_OFF,
-            SCREENSAVER_REACTION
+            SCREENSAVER_REACTION,
+            SCREENSAVER_MATRIX
             -> value
             else -> SCREENSAVER_LIFE
         }

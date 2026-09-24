@@ -13,10 +13,14 @@ namespace screens {
         void draw(ui::Context& ui);
 
     private:
+        void drawGlyphs(ui::Context& ui, const standby::Frame& frame, int16_t originX, int16_t originY);
+
         standby::ScreensaverSlot screensaver_;
         uint32_t nextFrameMs_ = 0;
         uint16_t columns_ = 0;
         uint16_t rows_ = 0;
+        uint8_t cellWidth_ = 0;
+        uint8_t cellHeight_ = 0;
         standby::Kind kind_ = standby::Kind::life;
     };
 

@@ -28,6 +28,16 @@ namespace standby {
             break;
         }
 
+        case Kind::matrix: {
+            auto saver = std::unique_ptr<MatrixScreensaver>{new (std::nothrow) MatrixScreensaver};
+            if (!saver)
+                return;
+            saver->reset(columns, rows);
+            storage_ = std::move(saver);
+            kind_ = Kind::matrix;
+            break;
+        }
+
         case Kind::reaction: {
             auto saver = std::unique_ptr<ReactionScreensaver>{new (std::nothrow) ReactionScreensaver};
             if (!saver)
@@ -73,6 +83,9 @@ namespace standby {
         case Kind::voronoi:
             std::get<std::unique_ptr<VoronoiScreensaver>>(storage_)->seed(rngSeed);
             break;
+        case Kind::matrix:
+            std::get<std::unique_ptr<MatrixScreensaver>>(storage_)->seed(rngSeed);
+            break;
         case Kind::reaction:
             std::get<std::unique_ptr<ReactionScreensaver>>(storage_)->seed(rngSeed);
             break;
@@ -97,6 +110,9 @@ namespace standby {
         case Kind::voronoi:
             std::get<std::unique_ptr<VoronoiScreensaver>>(storage_)->step();
             break;
+        case Kind::matrix:
+            std::get<std::unique_ptr<MatrixScreensaver>>(storage_)->step();
+            break;
         case Kind::reaction:
             std::get<std::unique_ptr<ReactionScreensaver>>(storage_)->step();
             break;
@@ -119,6 +135,8 @@ namespace standby {
             return std::get<std::unique_ptr<MazeScreensaver>>(storage_)->frame();
         case Kind::voronoi:
             return std::get<std::unique_ptr<VoronoiScreensaver>>(storage_)->frame();
+        case Kind::matrix:
+            return std::get<std::unique_ptr<MatrixScreensaver>>(storage_)->frame();
         case Kind::reaction:
             return std::get<std::unique_ptr<ReactionScreensaver>>(storage_)->frame();
         case Kind::screenOff:

@@ -57,7 +57,7 @@ card content before testing new firmware.
 - **Offline-friendly setup:** an installable PWA shell, browser firmware installation, Improv Wi-Fi
   provisioning, and local file conversion without a server-side converter.
 - **Device utilities:** OTA updates, SD diagnostics, configurable focus routines, and Life, Maze,
-  Voronoi, and Reaction screensavers.
+  Voronoi, Reaction, and Matrix screensavers.
 
 ## Get started
 

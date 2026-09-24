@@ -718,6 +718,7 @@ private fun DisplaySettings(
                     NanoSettingsSchema.SCREENSAVER_MAZE to "Maze",
                     NanoSettingsSchema.SCREENSAVER_VORONOI to "Voronoi",
                     NanoSettingsSchema.SCREENSAVER_REACTION to "Reaction",
+                    NanoSettingsSchema.SCREENSAVER_MATRIX to "Matrix",
                     NanoSettingsSchema.SCREENSAVER_SCREEN_OFF to "Screen off",
                 ),
                 onSelected = { mode ->

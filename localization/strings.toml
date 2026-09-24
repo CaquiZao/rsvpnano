@@ -1375,6 +1375,23 @@ ChineseSimplified = "沃罗诺伊"
 ChineseTraditional = "沃羅諾伊"
 
 [[strings]]
+key = "Matrix"
+context = "Falling-glyph matrix rain screensaver option."
+English = "Matrix"
+Spanish = "Matrix"
+French = "Matrix"
+German = "Matrix"
+Romanian = "Matrix"
+Polish = "Matrix"
+Russian = "Матрица"
+Hebrew = "מטריקס"
+Arabic = "ماتريكس"
+Japanese = "マトリックス"
+Korean = "매트릭스"
+ChineseSimplified = "矩阵"
+ChineseTraditional = "矩陣"
+
+[[strings]]
 key = "Reaction"
 context = "Belousov-Zhabotinsky-inspired reaction screensaver option."
 English = "Reaction"

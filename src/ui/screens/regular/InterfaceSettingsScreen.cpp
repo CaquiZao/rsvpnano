@@ -76,6 +76,7 @@ namespace screens {
         const UiText screensaver = config.screensaver == standby::Kind::maze      ? UiText::Maze
                                  : config.screensaver == standby::Kind::voronoi   ? UiText::Voronoi
                                  : config.screensaver == standby::Kind::reaction  ? UiText::Reaction
+                                 : config.screensaver == standby::Kind::matrix    ? UiText::Matrix
                                  : config.screensaver == standby::Kind::screenOff ? UiText::ScreenOff
                                                                                   : UiText::Life;
         if (ui.setting({static_cast<int16_t>(content.x + halfWidth + gap), secondRowY, halfWidth, rowHeight},

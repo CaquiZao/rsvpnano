@@ -56,5 +56,5 @@ struct glz::meta<settings::ReadingPacing> {
 template<>
 struct glz::meta<standby::Kind> {
     using enum standby::Kind;
-    static constexpr auto value = glz::enumerate(life, maze, voronoi, screenOff, reaction);
+    static constexpr auto value = glz::enumerate(life, maze, voronoi, screenOff, reaction, matrix);
 };
