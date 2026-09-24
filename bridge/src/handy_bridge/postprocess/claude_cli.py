@@ -220,8 +220,22 @@ def _parse_tasks(raw: object) -> list[Task]:
 
 
 def _default_runner(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
+    """Run the CLI with the prompt (cmd[2]) on stdin instead of in argv.
+
+    Windows caps a command line at 32767 characters. A recall carries the book
+    passage and blows past that; CreateProcess then fails with WinError 206,
+    which Python raises as FileNotFoundError, so the log blamed a missing CLI.
+    `claude -p` with no prompt argument reads it from stdin.
+    """
+    prompt = cmd[2]
+    argv = cmd[:2] + cmd[3:]
     return subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", timeout=timeout
+        argv,
+        input=prompt,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=timeout,
     )
 
 

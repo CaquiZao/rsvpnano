@@ -492,3 +492,29 @@ def test_followup_still_renders_a_real_exchange_as_question_and_answer():
     )
     assert "P: o que foi?" in seen["prompt"]
     assert "R: foi assim" in seen["prompt"]
+
+
+def test_default_runner_sends_prompt_on_stdin_not_argv(monkeypatch):
+    # O Windows limita a linha de comando a 32767 caracteres. Um recall com o
+    # trecho do livro passa disso, e o CreateProcess falha com WinError 206,
+    # que o Python levanta como FileNotFoundError: o log dizia "claude CLI not
+    # found on PATH" com o CLI instalado. O prompt tem que ir pelo stdin.
+    import subprocess as sp
+
+    from handy_bridge.postprocess import claude_cli
+
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["input"] = kwargs.get("input")
+        return FakeCompleted(wrapper('{"x": 1}'))
+
+    monkeypatch.setattr(sp, "run", fake_run)
+    prompt = "p" * 40000
+    claude_cli.ClaudeCliProcessor("m")._run(prompt)
+
+    assert seen["input"] == prompt
+    assert prompt not in seen["argv"]
+    assert seen["argv"][:2] == ["claude", "-p"]
+    assert sum(len(a) for a in seen["argv"]) < 1000
